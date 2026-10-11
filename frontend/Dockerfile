@@ -1,0 +1,31 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+ARG PUBLIC_API_URL=""
+ARG COGNITO_REGION
+ARG COGNITO_USER_POOL_ID
+ARG COGNITO_PUBLIC_CLIENT_ID
+ARG OIDC_AUTHORIZE_ENDPOINT
+ARG OIDC_EXCHANGE_ENDPOINT
+ARG OIDC_PUBLIC_CLIENT_ID
+ARG OIDC_CALLBACK_URI
+ARG OIDC_PUBLIC_SCOPES="openid profile email"
+RUN VITE_API_BASE_URL="$PUBLIC_API_URL" \
+    VITE_COGNITO_REGION="$COGNITO_REGION" \
+    VITE_COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" \
+    VITE_COGNITO_CLIENT_ID="$COGNITO_PUBLIC_CLIENT_ID" \
+    VITE_OIDC_AUTHORIZE_URL="$OIDC_AUTHORIZE_ENDPOINT" \
+    VITE_OIDC_TOKEN_URL="$OIDC_EXCHANGE_ENDPOINT" \
+    VITE_OIDC_CLIENT_ID="$OIDC_PUBLIC_CLIENT_ID" \
+    VITE_OIDC_REDIRECT_URI="$OIDC_CALLBACK_URI" \
+    VITE_OIDC_SCOPES="$OIDC_PUBLIC_SCOPES" \
+    npm run build
+
+FROM nginxinc/nginx-unprivileged:stable-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1

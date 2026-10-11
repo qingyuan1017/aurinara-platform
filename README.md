@@ -1,0 +1,137 @@
+# Aurinara Platform Control Plane
+
+Independent shared service for Aurinara identity mapping, canonical study identity,
+study/site-scoped authorization decisions, and immutable cross-product objects.
+Product databases never import this service's ORM models and never receive object-store
+credentials or keys.
+
+## Local development
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+docker compose up -d
+alembic upgrade head
+python scripts/bootstrap_service_accounts.py --aurinara-client-id <client-id> --edc-client-id <client-id>
+uvicorn aurinara_platform.main:app --reload --port 8002
+```
+
+After the first development administrator has signed in, grant that administrator
+the local product roles used to exercise the cross-product runtime:
+
+```powershell
+python scripts/bootstrap_local_product_access.py
+```
+
+This command is rejected outside `ENVIRONMENT=development`. Production roles and
+assignments must continue to come from reviewed migration snapshots.
+
+The API is under `/v1`; OpenAPI is at `/v1/openapi.json`. Configure a development OIDC
+issuer matching `.env.example`. Production refuses default object credentials or a disabled
+malware scanner.
+
+The local Compose stack exposes PostgreSQL on `55433`, MinIO on `9200` (console `9201`),
+and LocalStack EventBridge/SQS on `4567`. It creates the versioned
+`aurinara-shared-objects` bucket, the `aurinara-platform` event bus, and one queue for each
+product. The local MinIO instance has no KMS, so development uses
+`OBJECT_STORE_SSE_ALGORITHM=none`; that value is rejected when `ENVIRONMENT=production`.
+Configure `AES256` or `aws:kms` with a real S3/MinIO KMS deployment outside local
+development.
+
+## Administrative frontend
+
+The independent React console lives in `frontend/` and supports Cognito email/password
+authentication plus optional authorization-code + PKCE SSO. Cognito uses the public app
+client without a client secret and sends the ID token to the platform API. The console never
+receives service credentials, object-store credentials, or storage keys.
+
+```powershell
+cd frontend
+Copy-Item .env.example .env
+npm install
+npm run dev
+```
+
+Vite serves the console at `http://localhost:5174` and proxies `/v1` and `/health` to the
+control plane at `http://localhost:8002`. Register
+`http://localhost:5174/auth/callback` as the development redirect URI. Use a separate API
+audience for the control plane and grant administrative permissions through reviewed roles.
+
+For independent deployment, build `frontend/Dockerfile` with the `COGNITO_*` and optional
+`OIDC_*` public build arguments and the control-plane URL as `PUBLIC_API_URL`. The resulting
+unprivileged Nginx image listens on port `8080`, includes a `/healthz` probe, and routes
+OIDC callbacks back to the SPA without caching the application shell.
+
+Enable bucket versioning, access logging, private network policy, encryption, and Object
+Lock in environment infrastructure. The local Compose stack enables versioning; production
+can select `AES256` or `aws:kms` and optional governance/compliance retention settings.
+
+## Bootstrap and migration
+
+Export reviewed data from the product-specific migration tools and import it atomically:
+
+```powershell
+python scripts/import_snapshot.py .\migration\reviewed-control-plane-snapshot.json
+```
+
+The snapshot uses schema version `1.0.0` and contains users, studies, roles with explicit
+namespaced permissions, and scoped assignments. Existing UUIDs are preserved. Any UUID,
+OIDC subject, or study-code conflict aborts the transaction; the importer never guesses a
+match. Re-running an identical snapshot is idempotent.
+
+Product API service accounts are normal registered OIDC identities. Grant them
+`platform.authorization.decide` and only their product's `*.object.upload`,
+`*.object.download`, and `*.object.reference` permissions. End-user tokens are never
+exchanged for bucket credentials.
+
+Run `python scripts/publish_outbox.py --watch` from a supervised worker. The local
+Compose stack provides the equivalent `outbox-publisher` service, so
+`docker compose up -d outbox-publisher` keeps delivery active across terminal restarts.
+Delivery is at least once;
+consumers persist event IDs and aggregate sequences before acknowledging their queue
+messages. Membership and account events also invalidate product authorization caches.
+
+## Runtime connections
+
+Create separate confidential Cognito app clients for `aurinara` and `aurinara-edc` with the
+client-credentials flow and only the `https://aurinara-platform.local/service` custom scope.
+Put each secret only in that product's ignored `.env`; never expose it to either frontend.
+The platform accepts service access tokens only when their `client_id` is listed in
+`OIDC_SERVICE_CLIENT_IDS` and the custom scope is present.
+
+For this local stack, configure each product with:
+
+```dotenv
+PLATFORM_CONTROL_PLANE_URL=http://127.0.0.1:8002
+PLATFORM_AUTHORIZATION_MODE=shadow
+PLATFORM_SERVICE_TOKEN_URL=https://<cognito-domain>/oauth2/token
+PLATFORM_SERVICE_SCOPE=https://aurinara-platform.local/service
+PLATFORM_SERVICE_RESOURCE=https://aurinara-platform.local
+PLATFORM_EVENT_REGION=us-east-1
+PLATFORM_EVENT_ENDPOINT_URL=http://127.0.0.1:4567
+```
+
+Use `http://127.0.0.1:4567/000000000000/aurinara-platform-events` for Aurinara's queue
+and `http://127.0.0.1:4567/000000000000/aurinara-edc-platform-events` for EDC's queue.
+After applying each product's projection migration, run its projection worker in watch mode:
+
+```powershell
+# aurinara/
+.venv\Scripts\python.exe scripts\platform_projection_worker.py --watch
+
+# aurinara-edc/backend/
+.venv\Scripts\python.exe -m app.workers.platform_projection_worker --watch
+```
+
+Keep authorization in `shadow` until decision mismatches have been reconciled. LocalStack,
+the default MinIO credentials, and the development malware-scanner bypass are local-only;
+production requires managed credentials, private networking, encryption, retention policy,
+and a required malware scanner.
+
+## Rollout modes
+
+Integrating products support `disabled`, `shadow`, and `enforced` authorization modes.
+Start with `shadow`, reconcile every local/central mismatch, and move permission families
+to `enforced` only after the import report is clean. No legacy records or objects should be
+deleted during the rollback window.

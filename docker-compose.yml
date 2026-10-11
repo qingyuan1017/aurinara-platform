@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aurinara_platform
+      POSTGRES_USER: aurinara_platform
+      POSTGRES_PASSWORD: aurinara_platform
+    ports:
+      - "55433:5432"
+    volumes:
+      - platform_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurinara_platform -d aurinara_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    pull_policy: never
+    user: "0"
+    command: ["server", "/bitnami/minio/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9200:9000"
+      - "9201:9001"
+    volumes:
+      - platform_object_data:/bitnami/minio/data
+  create-bucket:
+    image: bitnamilegacy/minio-client:2025.7.21-debian-12-r3
+    depends_on:
+      - minio
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done
+        mc mb --ignore-existing local/aurinara-shared-objects
+        mc version enable local/aurinara-shared-objects
+
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4567:4566"
+    environment:
+      SERVICES: events,sqs
+      AWS_DEFAULT_REGION: us-east-1
+      PERSISTENCE: "1"
+      DEBUG: "0"
+    volumes:
+      - ./docker/localstack/10-platform-events.sh:/etc/localstack/init/ready.d/10-platform-events.sh:ro
+      - platform_localstack_data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: &application-environment
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg://aurinara_platform:aurinara_platform@postgres:5432/aurinara_platform
+      EVENTBRIDGE_BUS_NAME: aurinara-platform
+      EVENTBRIDGE_ENDPOINT_URL: http://localstack:4566
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  outbox-publisher:
+    build: .
+    command: ["python", "scripts/publish_outbox.py", "--watch"]
+    environment: *application-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      localstack:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  platform_postgres_data:
+  platform_object_data:
+  platform_localstack_data:
