@@ -21,6 +21,8 @@ Parameters:
   PlatformSpaClientId: {Type: String}
   UserAudiences: {Type: String}
   ServiceClientIds: {Type: String}
+  AurinaraServiceClientId: {Type: String}
+  EdcServiceClientId: {Type: String}
   BrowserOrigins: {Type: String}
   MalwareScannerUrl: {Type: String, Default: ''}
   MalwareScannerTokenSecretArn:
@@ -272,7 +274,15 @@ Resources:
       ContainerDefinitions:
         - Name: migration
           Image: !Ref MigrationApplicationImage
-          Command: [python, scripts/aws_entrypoint.py, alembic, upgrade, head]
+          Command:
+            - python
+            - scripts/aws_entrypoint.py
+            - sh
+            - -c
+            - !Sub >-
+                alembic upgrade head && python scripts/bootstrap_service_accounts.py
+                --aurinara-client-id ${AurinaraServiceClientId}
+                --edc-client-id ${EdcServiceClientId}
           Essential: true
           ReadonlyRootFilesystem: true
           Environment: *ApplicationEnvironment

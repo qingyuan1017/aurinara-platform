@@ -118,6 +118,8 @@ Resources:
         PlatformSpaClientId: !GetAtt Identity.Outputs.PlatformSpaClientId
         UserAudiences: !GetAtt Identity.Outputs.UserAudiences
         ServiceClientIds: !GetAtt Identity.Outputs.ServiceClientIds
+        AurinaraServiceClientId: !GetAtt Identity.Outputs.AurinaraServiceClientId
+        EdcServiceClientId: !GetAtt Identity.Outputs.EdcServiceClientId
         BrowserOrigins: !Sub
           - 'https://${Platform}.${BaseDomain},https://${Aurinara}.${BaseDomain},https://${Edc}.${BaseDomain}'
           - Platform: !If [IsProduction, platform, platform-staging]

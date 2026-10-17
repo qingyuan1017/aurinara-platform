@@ -45,6 +45,10 @@ python scripts/bootstrap_service_accounts.py --aurinara-client-id <client-id> --
 uvicorn aurinara_platform.main:app --reload --port 8002
 ```
 
+The AWS migration task runs the service-account bootstrap automatically with the
+Cognito client IDs created by the environment stack. The command above remains
+available for local development and is safe to rerun.
+
 After the first development administrator has signed in, grant that administrator
 the local product roles used to exercise the cross-product runtime:
 
@@ -121,8 +125,8 @@ service account. Memberships list those active Sites by name and persist their s
 Product API service accounts are normal registered OIDC identities. Grant them
 `platform.authorization.decide` and only their product's `*.object.upload`,
 `*.object.download`, and `*.object.reference` permissions. The EDC service account also
-requires `edc.permission.sync` and `edc.site.sync`. End-user tokens are never exchanged for
-bucket credentials.
+requires `edc.permission.sync`, `edc.role.sync`, and `edc.site.sync`. End-user tokens are
+never exchanged for bucket credentials.
 
 Run `python scripts/publish_outbox.py --watch` from a supervised worker. The local
 Compose stack provides the equivalent `outbox-publisher` service, so

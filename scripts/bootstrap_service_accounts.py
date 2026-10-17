@@ -1,14 +1,16 @@
 """Idempotently register local Cognito M2M clients and least-privilege roles."""
 
 import argparse
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from aurinara_platform.config import get_settings
 from aurinara_platform.database import create_session_factory
 from aurinara_platform.models import (
     Permission,
+    PolicyState,
     Role,
     RoleAssignment,
     RolePermission,
@@ -16,18 +18,18 @@ from aurinara_platform.models import (
 )
 
 
-def _stable_id(kind: str, value: str):
+def _stable_id(kind: str, value: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"aurinara-platform:{kind}:{value}")
 
 
 def _register(
-    session,
+    session: Session,
     *,
     issuer: str,
     client_id: str,
     product: str,
-    assigned_by,
-) -> None:
+) -> bool:
+    changed = False
     user = session.scalar(select(User).where(User.issuer == issuer, User.subject == client_id))
     if user is None:
         user = User(
@@ -37,6 +39,7 @@ def _register(
             display_name=f"{product} service",
         )
         session.add(user)
+        changed = True
 
     role_name = f"{product} Service"
     role = session.scalar(select(Role).where(Role.product == product, Role.name == role_name))
@@ -50,10 +53,17 @@ def _register(
             assignable=False,
         )
         session.add(role)
+        changed = True
     else:
-        role.scope_level = "system"
-        role.assignable = False
-        role.status = "active"
+        expected_role_values = {
+            "scope_level": "system",
+            "assignable": False,
+            "status": "active",
+        }
+        for attribute, expected in expected_role_values.items():
+            if getattr(role, attribute) != expected:
+                setattr(role, attribute, expected)
+                changed = True
     session.flush()
 
     object_permissions = {
@@ -66,21 +76,31 @@ def _register(
     }
     permission_codes = ["platform.authorization.decide", *object_permissions[product]]
     if product == "aurinara-edc":
-        permission_codes.extend(("edc.permission.sync", "edc.site.sync"))
+        permission_codes.extend(("edc.permission.sync", "edc.role.sync", "edc.site.sync"))
     for code in permission_codes:
+        permission_product = (
+            "platform"
+            if code.startswith("platform.")
+            else "aurinara"
+            if code.startswith("artifact.")
+            else product
+        )
         permission = session.get(Permission, code)
         if permission is None:
             permission = Permission(
                 code=code,
-                product=product,
+                product=permission_product,
                 module="platform",
                 allowed_scope_levels=["system"],
             )
             session.add(permission)
-        elif code.startswith("artifact."):
-            permission.product = "aurinara"
+            changed = True
+        elif permission.product != permission_product:
+            permission.product = permission_product
+            changed = True
         if session.get(RolePermission, (role.id, code)) is None:
             session.add(RolePermission(role_id=role.id, permission_code=code))
+            changed = True
 
     assignment_id = _stable_id("service-assignment", f"{client_id}:{product}")
     if session.get(RoleAssignment, assignment_id) is None:
@@ -89,9 +109,11 @@ def _register(
                 id=assignment_id,
                 user_id=user.id,
                 role_id=role.id,
-                assigned_by=assigned_by,
+                assigned_by=user.id,
             )
         )
+        changed = True
+    return changed
 
 
 def main() -> None:
@@ -103,23 +125,23 @@ def main() -> None:
     settings = get_settings()
     factory = create_session_factory(settings)
     with factory.begin() as session:
-        actor = session.scalar(select(User).order_by(User.created_at))
-        if actor is None:
-            raise RuntimeError("Sign in to the platform once before bootstrapping service accounts")
-        _register(
+        changed = _register(
             session,
             issuer=settings.oidc_issuer,
             client_id=args.aurinara_client_id,
             product="aurinara",
-            assigned_by=actor.id,
         )
-        _register(
+        changed = _register(
             session,
             issuer=settings.oidc_issuer,
             client_id=args.edc_client_id,
             product="aurinara-edc",
-            assigned_by=actor.id,
-        )
+        ) or changed
+        policy = session.get(PolicyState, 1)
+        if policy is None:
+            raise RuntimeError("Platform policy state is not initialized")
+        if changed:
+            policy.version += 1
     print("service_accounts=ready")
 
 
