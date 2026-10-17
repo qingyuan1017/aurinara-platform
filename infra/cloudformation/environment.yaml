@@ -165,6 +165,23 @@ Resources:
         AccessLogBucketName: !GetAtt Data.Outputs.AccessLogBucketName
         DataKeyArn: !GetAtt Data.Outputs.DataKeyArn
 
+  ConsumerEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Shared consumer access to the Platform PrivateLink endpoint
+      VpcId: !GetAtt Network.Outputs.VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !GetAtt Network.Outputs.VpcCidr}
+  ConsumerPlatformEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !GetAtt Network.Outputs.VpcId
+      ServiceName: !GetAtt Compute.Outputs.PrivateLinkServiceName
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      SubnetIds: !Split [',', !GetAtt Network.Outputs.AppSubnetIds]
+      SecurityGroupIds: [!Ref ConsumerEndpointSecurityGroup]
+
 Outputs:
   ApplicationUrl:
     Value: !Sub
@@ -183,10 +200,9 @@ Outputs:
   PlatformPrivateLinkServiceName: {Value: !GetAtt Compute.Outputs.PrivateLinkServiceName}
   PlatformPrivateLinkServiceId: {Value: !GetAtt Compute.Outputs.PrivateLinkServiceId}
   PlatformPrivateUrl:
-    Value: !If
-      - HasPrivateApiDnsName
-      - !Sub 'http://${PrivateApiDnsName}'
-      - !Sub 'http://platform.internal.${BaseDomain}'
+    Value: !Sub
+      - 'http://${EndpointDns}'
+      - EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt ConsumerPlatformEndpoint.DnsEntries]]]
   PlatformPrivateDnsName:
     Value: !If [HasPrivateApiDnsName, !Ref PrivateApiDnsName, !Sub 'platform.internal.${BaseDomain}']
   SharedIdentityKeyArn: {Value: !GetAtt Data.Outputs.DataKeyArn}
