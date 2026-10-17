@@ -54,7 +54,8 @@ current_image=$APPLICATION_IMAGE
 services_enabled=false
 if aws cloudformation describe-stacks --stack-name "$stack_name" >/dev/null 2>&1; then
   current_image=$(aws cloudformation describe-stacks --stack-name "$stack_name" --query "Stacks[0].Parameters[?ParameterKey=='ApplicationImage'].ParameterValue" --output text)
-  services_enabled=true
+  services_enabled=$(aws cloudformation describe-stacks --stack-name "$stack_name" --query "Stacks[0].Parameters[?ParameterKey=='ServicesEnabled'].ParameterValue" --output text)
+  [[ "$services_enabled" == true ]] || services_enabled=false
 fi
 
 # Register the migration image while an existing service keeps its old digest.
