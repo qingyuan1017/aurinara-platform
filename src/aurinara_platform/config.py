@@ -20,6 +20,10 @@ class Settings(BaseSettings):
 
     oidc_issuer: str = "https://local-issuer.example"
     oidc_audience: str = "aurinara-platform"
+    oidc_user_audiences: str = (
+        "aurinara-platform,aurinara,aurinara-edc,aurinara-edc-api,"
+        "clinical-artifact-platform,clinical-edc"
+    )
     oidc_jwks_url: str = "http://localhost:8081/.well-known/jwks.json"
     oidc_algorithms: str = "RS256"
     oidc_service_client_ids: str = ""
@@ -50,6 +54,7 @@ class Settings(BaseSettings):
     eventbridge_bus_name: str | None = None
     eventbridge_source: str = "aurinara.platform"
     eventbridge_endpoint_url: str | None = None
+    cors_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:5175"
 
     @property
     def oidc_algorithm_list(self) -> list[str]:
@@ -58,6 +63,16 @@ class Settings(BaseSettings):
     @property
     def oidc_service_client_id_set(self) -> set[str]:
         return {item.strip() for item in self.oidc_service_client_ids.split(",") if item.strip()}
+
+    @property
+    def oidc_user_audience_set(self) -> set[str]:
+        values = {item.strip() for item in self.oidc_user_audiences.split(",") if item.strip()}
+        values.add(self.oidc_audience)
+        return values
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 
     @field_validator(
         "authorization_decision_ttl_seconds",

@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Aurinara Platform encrypted audit trail, alarms, dashboard, and budget.
+
+Parameters:
+  Environment: {Type: String, AllowedValues: [staging, production]}
+  AlarmEmail: {Type: String}
+  ClusterName: {Type: String}
+  ApiServiceName: {Type: String}
+  AlbFullName: {Type: String}
+  ApiTargetGroupFullName: {Type: String}
+  DatabaseIdentifier: {Type: String}
+  ObjectBucketName: {Type: String}
+  AccessLogBucketName: {Type: String}
+  DataKeyArn: {Type: String}
+
+Resources:
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties: {TopicName: !Sub 'aurinara-platform-${Environment}-alarms', KmsMasterKeyId: alias/aws/sns}
+  AlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Properties: {Protocol: email, Endpoint: !Ref AlarmEmail, TopicArn: !Ref AlarmTopic}
+  ApiUnhealthyTargets:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-unhealthy-targets
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions: [{Name: LoadBalancer, Value: !Ref AlbFullName}, {Name: TargetGroup, Value: !Ref ApiTargetGroupFullName}]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+  ApiFiveXx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-api-5xx
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions: [{Name: LoadBalancer, Value: !Ref AlbFullName}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+  ApiCpu:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-api-cpu
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions: [{Name: ClusterName, Value: !Ref ClusterName}, {Name: ServiceName, Value: !Ref ApiServiceName}]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+  DatabaseCpu:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-database-cpu
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions: [{Name: DBInstanceIdentifier, Value: !Ref DatabaseIdentifier}]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub aurinara-platform-${Environment}
+      DashboardBody: !Sub |
+        {"widgets":[
+          {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{"title":"API","region":"${AWS::Region}","metrics":[["AWS/ApplicationELB","TargetResponseTime","LoadBalancer","${AlbFullName}",{"stat":"p95"}],[".","HTTPCode_Target_5XX_Count",".",".",{"stat":"Sum","yAxis":"right"}]]}},
+          {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{"title":"Database","region":"${AWS::Region}","metrics":[["AWS/RDS","CPUUtilization","DBInstanceIdentifier","${DatabaseIdentifier}"],[".","DatabaseConnections",".","."]]}},
+          {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{"title":"Outbox","region":"${AWS::Region}","metrics":[["Aurinara Platform","OutboxOldestEventSeconds","Environment","${Environment}"],[".","OutboxPublishFailures",".","."]]}},
+          {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"WAF","region":"us-east-1","metrics":[["AWS/WAFV2","BlockedRequests","WebACL","aurinara-platform-${Environment}-edge","Rule","ALL","Region","Global",{"stat":"Sum"}]]}}
+        ]}
+  AuditTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: AuditLogPolicy
+    Properties:
+      TrailName: !Sub aurinara-platform-${Environment}
+      S3BucketName: !Ref AccessLogBucketName
+      S3KeyPrefix: cloudtrail
+      KMSKeyId: !Ref DataKeyArn
+      IsLogging: true
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+      EnableLogFileValidation: true
+      EventSelectors:
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+          DataResources: [{Type: AWS::S3::Object, Values: [!Sub 'arn:${AWS::Partition}:s3:::${ObjectBucketName}/']}]
+  AuditLogPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccessLogBucketName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudTrailAcl
+            Effect: Allow
+            Principal: {Service: cloudtrail.amazonaws.com}
+            Action: s3:GetBucketAcl
+            Resource: !Sub 'arn:${AWS::Partition}:s3:::${AccessLogBucketName}'
+          - Sid: CloudTrailWrite
+            Effect: Allow
+            Principal: {Service: cloudtrail.amazonaws.com}
+            Action: s3:PutObject
+            Resource: !Sub 'arn:${AWS::Partition}:s3:::${AccessLogBucketName}/cloudtrail/AWSLogs/${AWS::AccountId}/*'
+            Condition: {StringEquals: {'s3:x-amz-acl': bucket-owner-full-control}}
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget: {BudgetName: !Sub 'aurinara-platform-${Environment}', BudgetType: COST, TimeUnit: MONTHLY, BudgetLimit: {Amount: 1000, Unit: USD}}
+      NotificationsWithSubscribers:
+        - Notification: {NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlarmEmail}]
+
+Outputs:
+  AlarmTopicArn: {Value: !Ref AlarmTopic}
+  DashboardName: {Value: !Ref Dashboard}

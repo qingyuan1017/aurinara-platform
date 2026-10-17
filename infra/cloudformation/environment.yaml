@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Aurinara Platform foundation stack and shared identity/control-plane outputs.
+
+Parameters:
+  Environment: {Type: String, AllowedValues: [staging, production]}
+  VpcCidr: {Type: String, Default: 10.20.0.0/16}
+  BaseDomain: {Type: String}
+  DnsProvider: {Type: String, AllowedValues: [cloudflare, route53], Default: cloudflare}
+  HostedZoneId: {Type: String, Default: ''}
+  CertificateArn: {Type: String}
+  CognitoDomainPrefix: {Type: String}
+  SesSourceArn: {Type: String}
+  CognitoFromAddress: {Type: String}
+  ApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
+  MigrationApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
+  DatabaseInstanceClass: {Type: String, Default: db.m7g.large}
+  MalwareScannerUrl: {Type: String}
+  MalwareScannerTokenSecretArn: {Type: String}
+  PrivateApiDnsName: {Type: String}
+  AurinaraConsumerVpcCidr: {Type: String}
+  EdcConsumerVpcCidr: {Type: String}
+  AlarmEmail: {Type: String}
+  ServicesEnabled: {Type: String, AllowedValues: ['true', 'false'], Default: 'false'}
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, production]
+
+Rules:
+  Route53HostedZoneRequired:
+    RuleCondition: !Equals [!Ref DnsProvider, route53]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref HostedZoneId, '']]
+        AssertDescription: HostedZoneId is required when DnsProvider is route53.
+
+Resources:
+  Network:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: network.yaml
+      Parameters: {Environment: !Ref Environment, VpcCidr: !Ref VpcCidr}
+  Data:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: data.yaml
+      Parameters:
+        Environment: !Ref Environment
+        DataSubnetIds: !GetAtt Network.Outputs.DataSubnetIds
+        DatabaseSecurityGroupId: !GetAtt Network.Outputs.DatabaseSecurityGroupId
+        DatabaseInstanceClass: !Ref DatabaseInstanceClass
+        BrowserOrigins: !Sub
+          - 'https://${Platform}.${BaseDomain},https://${Aurinara}.${BaseDomain},https://${Edc}.${BaseDomain}'
+          - Platform: !If [IsProduction, platform, platform-staging]
+            Aurinara: !If [IsProduction, production, staging]
+            Edc: !If [IsProduction, edc, edc-staging]
+  Identity:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: identity.yaml
+      Parameters:
+        Environment: !Ref Environment
+        DomainPrefix: !Ref CognitoDomainPrefix
+        PlatformApplicationUrl: !Sub
+          - 'https://${Host}.${BaseDomain}'
+          - Host: !If [IsProduction, platform, platform-staging]
+        AurinaraApplicationUrl: !Sub
+          - 'https://${Host}.${BaseDomain}'
+          - Host: !If [IsProduction, production, staging]
+        EdcApplicationUrl: !Sub
+          - 'https://${Host}.${BaseDomain}'
+          - Host: !If [IsProduction, edc, edc-staging]
+        DataKeyArn: !GetAtt Data.Outputs.DataKeyArn
+        SesSourceArn: !Ref SesSourceArn
+        CognitoFromAddress: !Ref CognitoFromAddress
+  Compute:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: compute.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ServicesEnabled: !Ref ServicesEnabled
+        ApplicationImage: !Ref ApplicationImage
+        MigrationApplicationImage: !Ref MigrationApplicationImage
+        VpcId: !GetAtt Network.Outputs.VpcId
+        AppSubnetIds: !GetAtt Network.Outputs.AppSubnetIds
+        AlbSecurityGroupId: !GetAtt Network.Outputs.AlbSecurityGroupId
+        ApiSecurityGroupId: !GetAtt Network.Outputs.ApiSecurityGroupId
+        WorkerSecurityGroupId: !GetAtt Network.Outputs.WorkerSecurityGroupId
+        DatabaseEndpoint: !GetAtt Data.Outputs.DatabaseEndpoint
+        DatabaseSecretArn: !GetAtt Data.Outputs.DatabaseSecretArn
+        DataKeyArn: !GetAtt Data.Outputs.DataKeyArn
+        ObjectBucketName: !GetAtt Data.Outputs.ObjectBucketName
+        EventBusName: !GetAtt Data.Outputs.EventBusName
+        JwtIssuer: !GetAtt Identity.Outputs.JwtIssuer
+        JwtJwksUrl: !GetAtt Identity.Outputs.JwtJwksUrl
+        PlatformSpaClientId: !GetAtt Identity.Outputs.PlatformSpaClientId
+        UserAudiences: !GetAtt Identity.Outputs.UserAudiences
+        ServiceClientIds: !GetAtt Identity.Outputs.ServiceClientIds
+        BrowserOrigins: !Sub
+          - 'https://${Platform}.${BaseDomain},https://${Aurinara}.${BaseDomain},https://${Edc}.${BaseDomain}'
+          - Platform: !If [IsProduction, platform, platform-staging]
+            Aurinara: !If [IsProduction, production, staging]
+            Edc: !If [IsProduction, edc, edc-staging]
+        MalwareScannerUrl: !Ref MalwareScannerUrl
+        MalwareScannerTokenSecretArn: !Ref MalwareScannerTokenSecretArn
+        PrivateApiDnsName: !Ref PrivateApiDnsName
+        AurinaraConsumerVpcCidr: !Ref AurinaraConsumerVpcCidr
+        EdcConsumerVpcCidr: !Ref EdcConsumerVpcCidr
+  Edge:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: edge.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ApplicationDomain: !Sub
+          - '${Host}.${BaseDomain}'
+          - Host: !If [IsProduction, platform, platform-staging]
+        DnsProvider: !Ref DnsProvider
+        HostedZoneId: !Ref HostedZoneId
+        CertificateArn: !Ref CertificateArn
+        FrontendBucketName: !GetAtt Data.Outputs.FrontendBucketName
+        FrontendBucketRegionalDomainName: !GetAtt Data.Outputs.FrontendBucketRegionalDomainName
+        AccessLogBucketDomainName: !GetAtt Data.Outputs.AccessLogBucketDomainName
+        AlbArn: !GetAtt Compute.Outputs.AlbArn
+        AlbDnsName: !GetAtt Compute.Outputs.AlbDnsName
+  Operations:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: operations.yaml
+      Parameters:
+        Environment: !Ref Environment
+        AlarmEmail: !Ref AlarmEmail
+        ClusterName: !GetAtt Compute.Outputs.ClusterName
+        ApiServiceName: !GetAtt Compute.Outputs.ApiServiceName
+        AlbFullName: !GetAtt Compute.Outputs.AlbFullName
+        ApiTargetGroupFullName: !GetAtt Compute.Outputs.ApiTargetGroupFullName
+        DatabaseIdentifier: !GetAtt Data.Outputs.DatabaseIdentifier
+        ObjectBucketName: !GetAtt Data.Outputs.ObjectBucketName
+        AccessLogBucketName: !GetAtt Data.Outputs.AccessLogBucketName
+        DataKeyArn: !GetAtt Data.Outputs.DataKeyArn
+
+Outputs:
+  ApplicationUrl:
+    Value: !Sub
+      - 'https://${Host}.${BaseDomain}'
+      - Host: !If [IsProduction, platform, platform-staging]
+  PlatformUrl:
+    Value: !Sub
+      - 'https://${Host}.${BaseDomain}'
+      - Host: !If [IsProduction, platform, platform-staging]
+  CloudFrontDistributionId: {Value: !GetAtt Edge.Outputs.DistributionId}
+  CloudFrontDistributionDomainName: {Value: !GetAtt Edge.Outputs.DistributionDomainName}
+  FrontendBucketName: {Value: !GetAtt Data.Outputs.FrontendBucketName}
+  ObjectBucketName: {Value: !GetAtt Data.Outputs.ObjectBucketName}
+  EventBusName: {Value: !GetAtt Data.Outputs.EventBusName}
+  EventBusArn: {Value: !GetAtt Data.Outputs.EventBusArn}
+  PlatformPrivateLinkServiceName: {Value: !GetAtt Compute.Outputs.PrivateLinkServiceName}
+  PlatformPrivateLinkServiceId: {Value: !GetAtt Compute.Outputs.PrivateLinkServiceId}
+  PlatformPrivateUrl: {Value: !Sub 'http://${PrivateApiDnsName}'}
+  PlatformPrivateDnsName: {Value: !Ref PrivateApiDnsName}
+  SharedIdentityKeyArn: {Value: !GetAtt Data.Outputs.DataKeyArn}
+  UserPoolId: {Value: !GetAtt Identity.Outputs.UserPoolId}
+  PlatformSpaClientId: {Value: !GetAtt Identity.Outputs.PlatformSpaClientId}
+  AurinaraSpaClientId: {Value: !GetAtt Identity.Outputs.AurinaraSpaClientId}
+  EdcSpaClientId: {Value: !GetAtt Identity.Outputs.EdcSpaClientId}
+  AurinaraServiceClientId: {Value: !GetAtt Identity.Outputs.AurinaraServiceClientId}
+  EdcServiceClientId: {Value: !GetAtt Identity.Outputs.EdcServiceClientId}
+  AurinaraServiceClientSecretArn: {Value: !GetAtt Identity.Outputs.AurinaraServiceClientSecretArn}
+  EdcServiceClientSecretArn: {Value: !GetAtt Identity.Outputs.EdcServiceClientSecretArn}
+  JwtIssuer: {Value: !GetAtt Identity.Outputs.JwtIssuer}
+  JwtJwksUrl: {Value: !GetAtt Identity.Outputs.JwtJwksUrl}
+  AuthorizeUrl: {Value: !GetAtt Identity.Outputs.AuthorizeUrl}
+  TokenUrl: {Value: !GetAtt Identity.Outputs.TokenUrl}
+  LogoutUrl: {Value: !GetAtt Identity.Outputs.LogoutUrl}
+  CognitoDomain: {Value: !GetAtt Identity.Outputs.CognitoDomain}
+  ClusterName: {Value: !GetAtt Compute.Outputs.ClusterName}
+  MigrationTaskDefinitionArn: {Value: !GetAtt Compute.Outputs.MigrationTaskDefinitionArn}
+  AppSubnetIds: {Value: !GetAtt Network.Outputs.AppSubnetIds}
+  WorkerSecurityGroupId: {Value: !GetAtt Network.Outputs.WorkerSecurityGroupId}
+  DatabaseIdentifier: {Value: !GetAtt Data.Outputs.DatabaseIdentifier}
