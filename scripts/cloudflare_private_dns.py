@@ -59,6 +59,18 @@ def configure_private_dns(stack_name: str, zone_id: str, api_token: str) -> str:
         cloudflare_request("PUT", f"{api_base}/{record_id}", api_token, payload)
     else:
         cloudflare_request("POST", api_base, api_token, payload)
+    subprocess.run(
+        [
+            "aws",
+            "ec2",
+            "start-vpc-endpoint-service-private-dns-verification",
+            "--service-id",
+            service_id,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     for _ in range(80):
         _, _, state = private_dns_configuration(service_id)
         if state == "verified":
