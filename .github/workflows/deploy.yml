@@ -20,7 +20,7 @@ jobs:
         run: echo "image=${{ vars.APPLICATION_REPOSITORY_URI || '730335504220.dkr.ecr.us-east-1.amazonaws.com/aurinara-platform/application' }}@$(aws ecr describe-images --repository-name aurinara-platform/application --image-ids imageTag=${GITHUB_SHA} --query 'imageDetails[0].imageDigest' --output text)" >> "$GITHUB_OUTPUT"
       - uses: anchore/sbom-action@v0
         with: {image: '${{ steps.digest.outputs.image }}', artifact-name: platform-sbom.spdx.json}
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with: {image-ref: '${{ steps.digest.outputs.image }}', severity: 'CRITICAL,HIGH', exit-code: '1', ignore-unfixed: true}
   staging:
     needs: build
