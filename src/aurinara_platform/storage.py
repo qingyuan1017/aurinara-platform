@@ -53,16 +53,22 @@ class S3ObjectStorage:
         self._kms_key_id = settings.object_store_kms_key_id
         self._object_lock_enabled = settings.object_lock_enabled
         self._object_lock_mode = settings.object_lock_mode
+        access_key = settings.object_store_access_key.get_secret_value()
+        secret_key = settings.object_store_secret_key.get_secret_value()
+        credentials = (
+            {"aws_access_key_id": access_key, "aws_secret_access_key": secret_key}
+            if access_key and secret_key
+            else {}
+        )
         self._client = boto3.client(
             "s3",
-            endpoint_url=settings.object_store_endpoint,
+            endpoint_url=settings.object_store_endpoint or None,
             region_name=settings.object_store_region,
-            aws_access_key_id=settings.object_store_access_key.get_secret_value(),
-            aws_secret_access_key=settings.object_store_secret_key.get_secret_value(),
             config=Config(
                 signature_version="s3v4",
                 s3={"addressing_style": "path" if settings.object_store_path_style else "auto"},
             ),
+            **credentials,
         )
 
     def create_multipart(

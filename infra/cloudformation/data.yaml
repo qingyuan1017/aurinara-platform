@@ -1,0 +1,232 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Aurinara Platform encrypted PostgreSQL, immutable object storage, frontend storage, and backups.
+
+Parameters:
+  Environment: {Type: String, AllowedValues: [staging, production]}
+  DataSubnetIds: {Type: List<AWS::EC2::Subnet::Id>}
+  DatabaseSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
+  DatabaseInstanceClass: {Type: String}
+  BrowserOrigins: {Type: String}
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, production]
+
+Resources:
+  DataKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub Aurinara Platform ${Environment} data key
+      EnableKeyRotation: true
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AccountAdministration
+            Effect: Allow
+            Principal: {AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'}
+            Action: kms:*
+            Resource: '*'
+          - Sid: CloudWatchLogs
+            Effect: Allow
+            Principal: {Service: !Sub 'logs.${AWS::Region}.amazonaws.com'}
+            Action: [kms:Encrypt, kms:Decrypt, kms:ReEncrypt*, kms:GenerateDataKey*, kms:DescribeKey]
+            Resource: '*'
+            Condition: {ArnLike: {'kms:EncryptionContext:aws:logs:arn': !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'}}
+          - Sid: CloudTrail
+            Effect: Allow
+            Principal: {Service: cloudtrail.amazonaws.com}
+            Action: [kms:GenerateDataKey*, kms:DescribeKey]
+            Resource: '*'
+            Condition: {StringEquals: {'aws:SourceArn': !Sub 'arn:${AWS::Partition}:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/aurinara-platform-${Environment}'}}
+  DataKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties: {AliasName: !Sub 'alias/aurinara-platform-${Environment}', TargetKeyId: !Ref DataKey}
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Aurinara Platform private data subnets
+      SubnetIds: !Ref DataSubnetIds
+  DatabaseParameters:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: postgres16
+      Description: Aurinara Platform PostgreSQL 16 parameters
+      Parameters: {rds.force_ssl: '1', log_min_duration_statement: '1000'}
+  DatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub aurinara-platform/${Environment}/database
+      KmsKeyId: !Ref DataKey
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"aurinara_platform"}'
+        GenerateStringKey: password
+        PasswordLength: 40
+        ExcludeCharacters: '"@/\\'
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub aurinara-platform-${Environment}
+      Engine: postgres
+      EngineVersion: '16.9'
+      DBName: aurinara_platform
+      DBInstanceClass: !Ref DatabaseInstanceClass
+      AllocatedStorage: !If [IsProduction, 100, 50]
+      MaxAllocatedStorage: !If [IsProduction, 500, 200]
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !Ref DataKey
+      MasterUsername: !Sub '{{resolve:secretsmanager:${DatabaseSecret}:SecretString:username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DatabaseSecret}:SecretString:password}}'
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroupId]
+      DBParameterGroupName: !Ref DatabaseParameters
+      MultiAZ: !If [IsProduction, true, false]
+      PubliclyAccessible: false
+      AutoMinorVersionUpgrade: true
+      BackupRetentionPeriod: !If [IsProduction, 35, 7]
+      PreferredBackupWindow: 05:00-06:00
+      PreferredMaintenanceWindow: sun:06:30-sun:07:30
+      CopyTagsToSnapshot: true
+      DeletionProtection: !If [IsProduction, true, false]
+      EnablePerformanceInsights: true
+      PerformanceInsightsKMSKeyId: !Ref DataKey
+      PerformanceInsightsRetentionPeriod: !If [IsProduction, 731, 7]
+      MonitoringInterval: 60
+      MonitoringRoleArn: !GetAtt EnhancedMonitoringRole.Arn
+      EnableCloudwatchLogsExports: [postgresql, upgrade]
+  EnhancedMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: monitoring.rds.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole]
+
+  ObjectBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'aurinara-platform-${Environment}-${AWS::AccountId}-${AWS::Region}'
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule: {DefaultRetention: {Mode: GOVERNANCE, Days: 30}}
+      VersioningConfiguration: {Status: Enabled}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref DataKey}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration: &PublicBlock
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: !Split [',', !Ref BrowserOrigins]
+            AllowedMethods: [GET, PUT, POST, HEAD]
+            AllowedHeaders: ['*']
+            ExposedHeaders: [ETag, x-amz-checksum-sha256]
+            MaxAge: 300
+      LifecycleConfiguration:
+        Rules:
+          - {Id: AbortMultipart, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 7}}
+          - {Id: NoncurrentVersions, Status: Enabled, NoncurrentVersionTransitions: [{StorageClass: GLACIER, TransitionInDays: 90}]}
+  ObjectBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ObjectBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!Sub '${ObjectBucket.Arn}', !Sub '${ObjectBucket.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': false}}
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'aurinara-platform-${Environment}-frontend-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration: {Status: Enabled}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref DataKey}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration: *PublicBlock
+  AccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'aurinara-platform-${Environment}-logs-${AWS::AccountId}-${AWS::Region}'
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerPreferred}]}
+      AccessControl: LogDeliveryWrite
+      VersioningConfiguration: {Status: Enabled}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration: *PublicBlock
+      LifecycleConfiguration:
+        Rules: [{Id: RetainAccessLogs, Status: Enabled, ExpirationInDays: 365}]
+
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties: {Name: !Sub 'aurinara-platform-${Environment}'}
+
+  BackupVault:
+    Type: AWS::Backup::BackupVault
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties: {BackupVaultName: !Sub 'aurinara-platform-${Environment}', EncryptionKeyArn: !GetAtt DataKey.Arn}
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: backup.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/AWSBackupServiceRolePolicyForS3Backup
+  BackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Sub aurinara-platform-${Environment}
+        BackupPlanRule:
+          - RuleName: daily
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: cron(0 6 ? * * *)
+            Lifecycle: {DeleteAfterDays: 35}
+  BackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref BackupPlan
+      BackupSelection:
+        SelectionName: objects
+        IamRoleArn: !GetAtt BackupRole.Arn
+        Resources: [!GetAtt ObjectBucket.Arn]
+
+Outputs:
+  DataKeyArn: {Value: !GetAtt DataKey.Arn}
+  DatabaseEndpoint: {Value: !GetAtt Database.Endpoint.Address}
+  DatabaseIdentifier: {Value: !Ref Database}
+  DatabaseSecretArn: {Value: !Ref DatabaseSecret}
+  ObjectBucketName: {Value: !Ref ObjectBucket}
+  FrontendBucketName: {Value: !Ref FrontendBucket}
+  FrontendBucketRegionalDomainName: {Value: !GetAtt FrontendBucket.RegionalDomainName}
+  AccessLogBucketName: {Value: !Ref AccessLogBucket}
+  AccessLogBucketDomainName: {Value: !GetAtt AccessLogBucket.DomainName}
+  EventBusName: {Value: !Ref EventBus}
+  EventBusArn: {Value: !GetAtt EventBus.Arn}
+  BackupVaultName: {Value: !Ref BackupVault}

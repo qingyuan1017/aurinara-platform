@@ -46,20 +46,39 @@ def _register(
             product=product,
             name=role_name,
             description="Runtime service-to-service access",
+            scope_level="system",
+            assignable=False,
         )
         session.add(role)
+    else:
+        role.scope_level = "system"
+        role.assignable = False
+        role.status = "active"
     session.flush()
 
-    for code in (
-        "platform.authorization.decide",
-        f"{product}.object.upload",
-        f"{product}.object.download",
-        f"{product}.object.reference",
-    ):
+    object_permissions = {
+        "aurinara": (
+            "artifact.object.upload",
+            "artifact.object.download",
+            "artifact.object.reference",
+        ),
+        "aurinara-edc": ("edc.file.upload",),
+    }
+    permission_codes = ["platform.authorization.decide", *object_permissions[product]]
+    if product == "aurinara-edc":
+        permission_codes.extend(("edc.permission.sync", "edc.site.sync"))
+    for code in permission_codes:
         permission = session.get(Permission, code)
         if permission is None:
-            permission = Permission(code=code, product=code.split(".", 1)[0])
+            permission = Permission(
+                code=code,
+                product=product,
+                module="platform",
+                allowed_scope_levels=["system"],
+            )
             session.add(permission)
+        elif code.startswith("artifact."):
+            permission.product = "aurinara"
         if session.get(RolePermission, (role.id, code)) is None:
             session.add(RolePermission(role_id=role.id, permission_code=code))
 

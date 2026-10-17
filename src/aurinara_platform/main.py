@@ -4,6 +4,7 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 from aurinara_platform import __version__
 from aurinara_platform.api import router
@@ -11,10 +12,13 @@ from aurinara_platform.auth import JwksTokenVerifier, TokenVerifier
 from aurinara_platform.config import Settings, get_settings
 from aurinara_platform.database import create_session_factory
 from aurinara_platform.problems import install_problem_handlers
+from aurinara_platform.repository import RepositoryService
+from aurinara_platform.repository_api import router as repository_router
 from aurinara_platform.services import (
     AuthorizationService,
     MembershipService,
     ObjectService,
+    SiteService,
     StudyService,
     UserService,
 )
@@ -53,9 +57,29 @@ def create_app(
     app.state.token_verifier = token_verifier or JwksTokenVerifier(resolved)
     app.state.authorization_service = authorization
     app.state.study_service = StudyService(authorization)
+    app.state.site_service = SiteService(authorization)
     app.state.user_service = UserService(authorization)
     app.state.membership_service = MembershipService(authorization)
     app.state.object_service = ObjectService(resolved, authorization, storage, scanner)
+    app.state.repository_service = RepositoryService(
+        authorization, storage, resolved.object_presign_ttl_seconds
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=resolved.cors_origin_list,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "If-Match",
+            "Idempotency-Key",
+            "X-Correlation-ID",
+            "X-Request-ID",
+        ],
+        expose_headers=["ETag", "Location", "X-Correlation-ID", "X-Request-ID"],
+    )
 
     @app.middleware("http")
     async def request_context(request: Request, call_next: Callable[[Request], object]) -> Response:
@@ -68,6 +92,7 @@ def create_app(
 
     install_problem_handlers(app)
     app.include_router(router, prefix=resolved.api_prefix)
+    app.include_router(repository_router, prefix=resolved.api_prefix)
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:
