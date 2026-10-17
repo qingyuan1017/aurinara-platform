@@ -9,21 +9,26 @@ Parameters:
   HostedZoneId: {Type: String, Default: ''}
   CertificateArn: {Type: String}
   CognitoDomainPrefix: {Type: String}
-  SesSourceArn: {Type: String}
-  CognitoFromAddress: {Type: String}
+  SesSourceArn: {Type: String, Default: ''}
+  CognitoFromAddress: {Type: String, Default: ''}
   ApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
   MigrationApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
   DatabaseInstanceClass: {Type: String, Default: db.m7g.large}
-  MalwareScannerUrl: {Type: String}
-  MalwareScannerTokenSecretArn: {Type: String}
-  PrivateApiDnsName: {Type: String}
+  MalwareScannerUrl: {Type: String, Default: ''}
+  MalwareScannerTokenSecretArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$'
+  PrivateApiDnsName: {Type: String, Default: ''}
   AurinaraConsumerVpcCidr: {Type: String}
   EdcConsumerVpcCidr: {Type: String}
-  AlarmEmail: {Type: String}
+  AlarmEmail: {Type: String, Default: ''}
   ServicesEnabled: {Type: String, AllowedValues: ['true', 'false'], Default: 'false'}
 
 Conditions:
   IsProduction: !Equals [!Ref Environment, production]
+  HasPrivateApiDnsName: !Not [!Equals [!Ref PrivateApiDnsName, '']]
+  HasMalwareScanner: !Not [!Equals [!Ref MalwareScannerUrl, '']]
 
 Rules:
   Route53HostedZoneRequired:
@@ -31,6 +36,24 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref HostedZoneId, '']]
         AssertDescription: HostedZoneId is required when DnsProvider is route53.
+  SesSenderPairRequired:
+    Assertions:
+      - Assert: !Or
+          - !And [!Equals [!Ref SesSourceArn, ''], !Equals [!Ref CognitoFromAddress, '']]
+          - !And
+            - !Not [!Equals [!Ref SesSourceArn, '']]
+            - !Not [!Equals [!Ref CognitoFromAddress, '']]
+        AssertDescription: SesSourceArn and CognitoFromAddress must be supplied together or both omitted.
+  MalwareScannerPairRequired:
+    Assertions:
+      - Assert: !Or
+          - !And
+            - !Equals [!Ref MalwareScannerUrl, '']
+            - !Equals [!Ref MalwareScannerTokenSecretArn, '']
+          - !And
+            - !Not [!Equals [!Ref MalwareScannerUrl, '']]
+            - !Not [!Equals [!Ref MalwareScannerTokenSecretArn, '']]
+        AssertDescription: MalwareScannerUrl and MalwareScannerTokenSecretArn must be supplied together or both omitted.
 
 Resources:
   Network:
@@ -101,8 +124,12 @@ Resources:
             Aurinara: !If [IsProduction, production, staging]
             Edc: !If [IsProduction, edc, edc-staging]
         MalwareScannerUrl: !Ref MalwareScannerUrl
-        MalwareScannerTokenSecretArn: !Ref MalwareScannerTokenSecretArn
-        PrivateApiDnsName: !Ref PrivateApiDnsName
+        MalwareScannerTokenSecretArn: !If
+          - HasMalwareScanner
+          - !Ref MalwareScannerTokenSecretArn
+          - !GetAtt Data.Outputs.DatabaseSecretArn
+        MalwareScanRequired: !If [HasMalwareScanner, 'true', 'false']
+        PrivateApiDnsName: !If [HasPrivateApiDnsName, !Ref PrivateApiDnsName, !Sub 'platform.internal.${BaseDomain}']
         AurinaraConsumerVpcCidr: !Ref AurinaraConsumerVpcCidr
         EdcConsumerVpcCidr: !Ref EdcConsumerVpcCidr
   Edge:
@@ -155,8 +182,13 @@ Outputs:
   EventBusArn: {Value: !GetAtt Data.Outputs.EventBusArn}
   PlatformPrivateLinkServiceName: {Value: !GetAtt Compute.Outputs.PrivateLinkServiceName}
   PlatformPrivateLinkServiceId: {Value: !GetAtt Compute.Outputs.PrivateLinkServiceId}
-  PlatformPrivateUrl: {Value: !Sub 'http://${PrivateApiDnsName}'}
-  PlatformPrivateDnsName: {Value: !Ref PrivateApiDnsName}
+  PlatformPrivateUrl:
+    Value: !If
+      - HasPrivateApiDnsName
+      - !Sub 'http://${PrivateApiDnsName}'
+      - !Sub 'http://platform.internal.${BaseDomain}'
+  PlatformPrivateDnsName:
+    Value: !If [HasPrivateApiDnsName, !Ref PrivateApiDnsName, !Sub 'platform.internal.${BaseDomain}']
   SharedIdentityKeyArn: {Value: !GetAtt Data.Outputs.DataKeyArn}
   UserPoolId: {Value: !GetAtt Identity.Outputs.UserPoolId}
   PlatformSpaClientId: {Value: !GetAtt Identity.Outputs.PlatformSpaClientId}

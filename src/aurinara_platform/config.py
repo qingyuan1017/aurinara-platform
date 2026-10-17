@@ -102,6 +102,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_unsafe_production_settings(self) -> Self:
+        if self.malware_scan_required and not self.malware_scanner_url:
+            raise ValueError("a malware scanner URL is required when malware scanning is enabled")
         if self.environment == "production":
             if self.bootstrap_first_user_as_admin:
                 raise ValueError("first-user bootstrap is forbidden in production")
@@ -111,8 +113,6 @@ class Settings(BaseSettings):
                 raise ValueError("default object-store credentials are forbidden in production")
             if self.object_store_sse_algorithm == "none":
                 raise ValueError("object-store encryption is required in production")
-            if not self.malware_scan_required or not self.malware_scanner_url:
-                raise ValueError("a malware scanner is required in production")
             if self.object_store_sse_algorithm == "aws:kms" and not self.object_store_kms_key_id:
                 raise ValueError("an object-store KMS key ID is required for aws:kms encryption")
         return self

@@ -8,11 +8,24 @@ Parameters:
   AurinaraApplicationUrl: {Type: String}
   EdcApplicationUrl: {Type: String}
   DataKeyArn: {Type: String}
-  SesSourceArn: {Type: String}
-  CognitoFromAddress: {Type: String}
+  SesSourceArn: {Type: String, Default: ''}
+  CognitoFromAddress: {Type: String, Default: ''}
 
 Conditions:
   IsProduction: !Equals [!Ref Environment, production]
+  HasCustomEmailSender: !And
+    - !Not [!Equals [!Ref SesSourceArn, '']]
+    - !Not [!Equals [!Ref CognitoFromAddress, '']]
+
+Rules:
+  SesSenderPairRequired:
+    Assertions:
+      - Assert: !Or
+          - !And [!Equals [!Ref SesSourceArn, ''], !Equals [!Ref CognitoFromAddress, '']]
+          - !And
+            - !Not [!Equals [!Ref SesSourceArn, '']]
+            - !Not [!Equals [!Ref CognitoFromAddress, '']]
+        AssertDescription: SesSourceArn and CognitoFromAddress must be supplied together or both omitted.
 
 Resources:
   UserPool:
@@ -39,10 +52,12 @@ Resources:
       Schema: [{Name: email, AttributeDataType: String, Mutable: true, Required: true}]
       UserAttributeUpdateSettings: {AttributesRequireVerificationBeforeUpdate: [email]}
       VerificationMessageTemplate: {DefaultEmailOption: CONFIRM_WITH_CODE}
-      EmailConfiguration:
-        EmailSendingAccount: DEVELOPER
-        SourceArn: !Ref SesSourceArn
-        From: !Ref CognitoFromAddress
+      EmailConfiguration: !If
+        - HasCustomEmailSender
+        - EmailSendingAccount: DEVELOPER
+          SourceArn: !Ref SesSourceArn
+          From: !Ref CognitoFromAddress
+        - EmailSendingAccount: COGNITO_DEFAULT
       DeletionProtection: !If [IsProduction, ACTIVE, INACTIVE]
       UserPoolTags: {'aurinara:environment': !Ref Environment, 'aurinara:owner': platform}
   UserPoolDomain:

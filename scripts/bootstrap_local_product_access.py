@@ -4,7 +4,7 @@ This helper is intentionally development-only. Production role definitions and
 assignments continue to arrive through reviewed migration snapshots.
 """
 
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
 
@@ -19,9 +19,6 @@ from aurinara_platform.models import (
     User,
     utc_now,
 )
-from aurinara_platform.services import _emit
-
-EDC_SYSTEM_ADMIN_ROLE_ID = UUID("e208baf5-110f-5708-a483-d643f9719bfb")
 
 ROLE_SPECS = (
     (
@@ -32,7 +29,6 @@ ROLE_SPECS = (
             "artifact.study.write",
             "artifact.object.upload",
             "artifact.object.download",
-            "artifact.object.reference",
             "artifact.execution.run",
             "artifact.validation.run",
             "artifact.reconciliation.run",
@@ -41,8 +37,8 @@ ROLE_SPECS = (
     ),
     (
         "aurinara-edc",
-        "EDC System Administrator",
-        (),
+        "Development EDC Study Reader",
+        ("edc.study.read",),
     ),
 )
 
@@ -75,11 +71,7 @@ def bootstrap(session, settings: Settings) -> tuple[int, int]:
         role = session.scalar(select(Role).where(Role.product == product, Role.name == name))
         if role is None:
             role = Role(
-                id=(
-                    EDC_SYSTEM_ADMIN_ROLE_ID
-                    if product == "aurinara-edc"
-                    else _stable_id("development-role", product)
-                ),
+                id=_stable_id("development-role", product),
                 product=product,
                 name=name,
                 description="Development-only runtime integration access",
@@ -91,15 +83,8 @@ def bootstrap(session, settings: Settings) -> tuple[int, int]:
         for code in permission_codes:
             permission = session.get(Permission, code)
             if permission is None:
-                permission = Permission(
-                    code=code,
-                    product=product,
-                    module="platform" if product == "platform" else product,
-                    allowed_scope_levels=["system", "study", "site"],
-                )
+                permission = Permission(code=code, product=code.split(".", 1)[0])
                 session.add(permission)
-            elif code.startswith("artifact."):
-                permission.product = "aurinara"
             if session.get(RolePermission, (role.id, code)) is None:
                 session.add(RolePermission(role_id=role.id, permission_code=code))
 
@@ -107,7 +92,9 @@ def bootstrap(session, settings: Settings) -> tuple[int, int]:
     created_assignments = 0
     for administrator in administrators:
         for role in roles:
-            assignment_id = _stable_id("development-assignment", f"{administrator.id}:{role.id}")
+            assignment_id = _stable_id(
+                "development-assignment", f"{administrator.id}:{role.id}"
+            )
             if session.get(RoleAssignment, assignment_id) is None:
                 session.add(
                     RoleAssignment(
@@ -119,32 +106,13 @@ def bootstrap(session, settings: Settings) -> tuple[int, int]:
                 )
                 created_assignments += 1
 
-    state = session.get(PolicyState, 1)
-    if state is None:
-        state = PolicyState(id=1, version=1)
-        session.add(state)
     if created_roles or created_assignments:
+        state = session.get(PolicyState, 1)
+        if state is None:
+            state = PolicyState(id=1, version=1)
+            session.add(state)
         state.version += 1
         state.updated_at = utc_now()
-    session.flush()
-    for administrator in administrators:
-        edc_roles = [role for role in roles if role.product == "aurinara-edc"]
-        _emit(
-            session,
-            "platform.assignment.changed.v1",
-            "user",
-            administrator.id,
-            state.version,
-            {
-                "user_id": str(administrator.id),
-                "issuer": administrator.issuer,
-                "subject": administrator.subject,
-                "product": "aurinara-edc",
-                "role_ids": [str(role.id) for role in edc_roles],
-                "assigned_by": str(administrator.id),
-                "policy_version": state.version,
-            },
-        )
     session.flush()
     return created_roles, created_assignments
 

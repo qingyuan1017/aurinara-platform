@@ -14,11 +14,13 @@ databases.
   and edit permissions.
 - An issued ACM certificate in `us-east-1` covering the Platform, Aurinara, and
   EDC staging/production hostnames.
-- Verified SES sender used by Cognito.
-- A private malware-scanner HTTPS endpoint and a Secrets Manager secret holding
-  its bearer token. Production Platform startup intentionally fails without it.
-- A private DNS name for the endpoint service, for example
-  `platform.internal.example.com`. Cloudflare must host the generated
+- Optional verified SES sender used by Cognito. When omitted, Cognito uses its
+  built-in email sender and its service limits.
+- Optional private malware-scanner HTTPS endpoint and a Secrets Manager secret
+  holding its bearer token. Configure both values together. When omitted,
+  uploaded objects are accepted without malware inspection in that environment.
+- An optional private DNS override for the endpoint service. It defaults to
+  `platform.internal.<base-domain>`. Cloudflare must host the generated
   PrivateLink verification TXT record.
 - GitHub `staging` and `production` environments; production should require
   reviewers.
@@ -60,9 +62,13 @@ bootstrap outputs and approved deployment inputs:
 - `TEMPLATE_BUCKET_NAME`
 - `BASE_DOMAIN`, `DNS_PROVIDER=cloudflare`, `CLOUDFLARE_ZONE_ID`
 - `CERTIFICATE_ARN`, `COGNITO_DOMAIN_PREFIX`
-- `SES_SOURCE_ARN`, `COGNITO_FROM_ADDRESS`
-- `MALWARE_SCANNER_URL`, `MALWARE_SCANNER_TOKEN_SECRET_ARN`
-- `PRIVATE_API_DNS_NAME`, `ALARM_EMAIL`
+- Optional `SES_SOURCE_ARN` and `COGNITO_FROM_ADDRESS`; configure both or
+  neither.
+- Optional `MALWARE_SCANNER_URL` and `MALWARE_SCANNER_TOKEN_SECRET_ARN`;
+  configure both or neither. Omitting them disables malware inspection.
+- Optional `PRIVATE_API_DNS_NAME` and `ALARM_EMAIL`. Without an alarm email the
+  dashboards, alarms, and SNS topic are still created, but no email or budget
+  subscription is created.
 
 Store `CLOUDFLARE_API_TOKEN` as an environment secret, never as a repository
 variable.

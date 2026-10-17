@@ -66,7 +66,7 @@ class JwksTokenVerifier:
     def _validate_user_token(self, claims: dict[str, object]) -> None:
         audience = claims.get("aud")
         audiences = {audience} if isinstance(audience, str) else set(audience or [])
-        if not audiences.intersection(self._settings.oidc_user_audience_set):
+        if self._settings.oidc_audience not in audiences:
             raise InvalidTokenError("The bearer token has an invalid audience")
         token_use = claims.get("token_use")
         if token_use not in {None, "id"}:

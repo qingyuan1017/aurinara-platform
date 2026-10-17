@@ -7,9 +7,26 @@ vpc_cidr=${3:?missing VPC CIDR}
 database_class=${4:?missing database class}
 dns_provider=${DNS_PROVIDER:-cloudflare}
 hosted_zone_id=${HOSTED_ZONE_ID:-}
+ses_source_arn=${SES_SOURCE_ARN:-}
+cognito_from_address=${COGNITO_FROM_ADDRESS:-}
+private_api_dns_name=${PRIVATE_API_DNS_NAME:-platform.internal.${BASE_DOMAIN:-}}
+alarm_email=${ALARM_EMAIL:-}
+malware_scanner_url=${MALWARE_SCANNER_URL:-}
+malware_scanner_token_secret_arn=${MALWARE_SCANNER_TOKEN_SECRET_ARN:-}
 
-required=(APPLICATION_IMAGE BASE_DOMAIN CERTIFICATE_ARN COGNITO_DOMAIN_PREFIX SES_SOURCE_ARN COGNITO_FROM_ADDRESS MALWARE_SCANNER_URL MALWARE_SCANNER_TOKEN_SECRET_ARN PRIVATE_API_DNS_NAME AURINARA_CONSUMER_VPC_CIDR EDC_CONSUMER_VPC_CIDR ALARM_EMAIL CLOUDFORMATION_EXECUTION_ROLE_ARN)
+required=(APPLICATION_IMAGE BASE_DOMAIN CERTIFICATE_ARN COGNITO_DOMAIN_PREFIX AURINARA_CONSUMER_VPC_CIDR EDC_CONSUMER_VPC_CIDR CLOUDFORMATION_EXECUTION_ROLE_ARN)
 for name in "${required[@]}"; do [[ -n "${!name:-}" ]] || { echo "$name is required" >&2; exit 1; }; done
+[[ -n "$private_api_dns_name" ]] || { echo "PRIVATE_API_DNS_NAME could not be derived" >&2; exit 1; }
+[[ -z "$ses_source_arn" && -z "$cognito_from_address" ]] || \
+  [[ -n "$ses_source_arn" && -n "$cognito_from_address" ]] || {
+    echo "SES_SOURCE_ARN and COGNITO_FROM_ADDRESS must be supplied together" >&2
+    exit 1
+  }
+[[ -z "$malware_scanner_url" && -z "$malware_scanner_token_secret_arn" ]] || \
+  [[ -n "$malware_scanner_url" && -n "$malware_scanner_token_secret_arn" ]] || {
+    echo "MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN_SECRET_ARN must be supplied together" >&2
+    exit 1
+  }
 [[ "$dns_provider" == cloudflare || "$dns_provider" == route53 ]] || { echo "DNS_PROVIDER must be cloudflare or route53" >&2; exit 1; }
 [[ "$dns_provider" != route53 || -n "$hosted_zone_id" ]] || { echo "HOSTED_ZONE_ID is required for Route 53" >&2; exit 1; }
 
@@ -26,10 +43,10 @@ deploy() {
     --parameter-overrides \
       Environment="$environment" VpcCidr="$vpc_cidr" BaseDomain="$BASE_DOMAIN" \
       DnsProvider="$dns_provider" HostedZoneId="$hosted_zone_id" CertificateArn="$CERTIFICATE_ARN" \
-      CognitoDomainPrefix="$COGNITO_DOMAIN_PREFIX" SesSourceArn="$SES_SOURCE_ARN" CognitoFromAddress="$COGNITO_FROM_ADDRESS" \
+      CognitoDomainPrefix="$COGNITO_DOMAIN_PREFIX" SesSourceArn="$ses_source_arn" CognitoFromAddress="$cognito_from_address" \
       ApplicationImage="$service_image" MigrationApplicationImage="$migration_image" DatabaseInstanceClass="$database_class" \
-      MalwareScannerUrl="$MALWARE_SCANNER_URL" MalwareScannerTokenSecretArn="$MALWARE_SCANNER_TOKEN_SECRET_ARN" \
-      PrivateApiDnsName="$PRIVATE_API_DNS_NAME" AlarmEmail="$ALARM_EMAIL" ServicesEnabled="$enabled" \
+      MalwareScannerUrl="$malware_scanner_url" MalwareScannerTokenSecretArn="$malware_scanner_token_secret_arn" \
+      PrivateApiDnsName="$private_api_dns_name" AlarmEmail="$alarm_email" ServicesEnabled="$enabled" \
       AurinaraConsumerVpcCidr="$AURINARA_CONSUMER_VPC_CIDR" EdcConsumerVpcCidr="$EDC_CONSUMER_VPC_CIDR"
 }
 

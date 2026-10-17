@@ -12,12 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
-        with: {role-to-assume: '${{ vars.AWS_DEPLOYMENT_ROLE_ARN }}', aws-region: '${{ env.AWS_REGION }}'}
+        with: {role-to-assume: "${{ vars.AWS_DEPLOYMENT_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-github-deployment' }}", aws-region: '${{ env.AWS_REGION }}'}
       - uses: aws-actions/amazon-ecr-login@v2
       - uses: docker/setup-buildx-action@v3
-      - run: docker buildx build --platform linux/amd64 --push -t "${{ vars.APPLICATION_REPOSITORY_URI }}:${GITHUB_SHA}" .
+      - run: docker buildx build --platform linux/amd64 --push -t "${{ vars.APPLICATION_REPOSITORY_URI || '730335504220.dkr.ecr.us-east-1.amazonaws.com/aurinara-platform/application' }}:${GITHUB_SHA}" .
       - id: digest
-        run: echo "image=${{ vars.APPLICATION_REPOSITORY_URI }}@$(aws ecr describe-images --repository-name aurinara-platform/application --image-ids imageTag=${GITHUB_SHA} --query 'imageDetails[0].imageDigest' --output text)" >> "$GITHUB_OUTPUT"
+        run: echo "image=${{ vars.APPLICATION_REPOSITORY_URI || '730335504220.dkr.ecr.us-east-1.amazonaws.com/aurinara-platform/application' }}@$(aws ecr describe-images --repository-name aurinara-platform/application --image-ids imageTag=${GITHUB_SHA} --query 'imageDetails[0].imageDigest' --output text)" >> "$GITHUB_OUTPUT"
       - uses: anchore/sbom-action@v0
         with: {image: '${{ steps.digest.outputs.image }}', artifact-name: platform-sbom.spdx.json}
       - uses: aquasecurity/trivy-action@0.28.0
@@ -33,15 +33,15 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json}
       - uses: aws-actions/configure-aws-credentials@v4
-        with: {role-to-assume: '${{ vars.AWS_DEPLOYMENT_ROLE_ARN }}', aws-region: '${{ env.AWS_REGION }}'}
+        with: {role-to-assume: "${{ vars.AWS_DEPLOYMENT_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-github-deployment' }}", aws-region: '${{ env.AWS_REGION }}'}
       - name: Package and deploy foundation
         env:
           APPLICATION_IMAGE: ${{ needs.build.outputs.image }}
-          BASE_DOMAIN: ${{ vars.BASE_DOMAIN }}
+          BASE_DOMAIN: ${{ vars.BASE_DOMAIN || 'aurinara.com' }}
           DNS_PROVIDER: ${{ vars.DNS_PROVIDER || 'cloudflare' }}
           HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
-          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
-          COGNITO_DOMAIN_PREFIX: ${{ vars.COGNITO_DOMAIN_PREFIX }}-staging
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN || 'arn:aws:acm:us-east-1:730335504220:certificate/57c0420d-a384-43ae-97c2-e7a6bb461b6c' }}
+          COGNITO_DOMAIN_PREFIX: aurinara-730335504220-staging
           SES_SOURCE_ARN: ${{ vars.SES_SOURCE_ARN }}
           COGNITO_FROM_ADDRESS: ${{ vars.COGNITO_FROM_ADDRESS }}
           MALWARE_SCANNER_URL: ${{ vars.MALWARE_SCANNER_URL }}
@@ -50,9 +50,9 @@ jobs:
           AURINARA_CONSUMER_VPC_CIDR: 10.40.0.0/16
           EDC_CONSUMER_VPC_CIDR: 10.30.0.0/16
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
-          CLOUDFORMATION_EXECUTION_ROLE_ARN: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE_ARN }}
+          CLOUDFORMATION_EXECUTION_ROLE_ARN: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-cloudformation-execution' }}
         run: |
-          aws cloudformation package --template-file infra/cloudformation/environment.yaml --s3-bucket "${{ vars.TEMPLATE_BUCKET_NAME }}" --s3-prefix "templates/${GITHUB_SHA}" --output-template-file packaged.yaml
+          aws cloudformation package --template-file infra/cloudformation/environment.yaml --s3-bucket "${{ vars.TEMPLATE_BUCKET_NAME || 'aurinara-platform-bootstrap-templatebucket-iynthwph0ib0' }}" --s3-prefix "templates/${GITHUB_SHA}" --output-template-file packaged.yaml
           bash scripts/aws-deploy-environment.sh aurinara-platform-staging staging 10.20.0.0/16 db.t4g.medium
       - name: Configure Cloudflare DNS-only CNAME
         if: ${{ vars.DNS_PROVIDER != 'route53' }}
@@ -77,7 +77,7 @@ jobs:
           VITE_OIDC_AUTHORIZE_URL: ${{ env.AUTHORIZE_URL }}
           VITE_OIDC_TOKEN_URL: ${{ env.TOKEN_URL }}
           VITE_OIDC_CLIENT_ID: ${{ env.PLATFORM_SPA_CLIENT_ID }}
-          VITE_OIDC_REDIRECT_URI: https://platform-staging.${{ vars.BASE_DOMAIN }}/auth/callback
+          VITE_OIDC_REDIRECT_URI: https://platform-staging.${{ vars.BASE_DOMAIN || 'aurinara.com' }}/auth/callback
           VITE_OIDC_SCOPES: openid profile email
           VITE_MANAGED_LOGIN_ONLY: 'true'
         run: npm ci && npm run build
@@ -87,7 +87,7 @@ jobs:
           distribution=$(aws cloudformation describe-stacks --stack-name aurinara-platform-staging --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
           aws s3 sync frontend/dist "s3://${bucket}" --delete
           aws cloudfront create-invalidation --distribution-id "$distribution" --paths '/*'
-          curl --fail --retry 12 --retry-delay 10 "https://platform-staging.${{ vars.BASE_DOMAIN }}/health/live"
+          curl --fail --retry 12 --retry-delay 10 "https://platform-staging.${{ vars.BASE_DOMAIN || 'aurinara.com' }}/health/live"
   production:
     needs: [build, staging]
     runs-on: ubuntu-latest
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json}
       - uses: aws-actions/configure-aws-credentials@v4
-        with: {role-to-assume: '${{ vars.AWS_DEPLOYMENT_ROLE_ARN }}', aws-region: '${{ env.AWS_REGION }}'}
+        with: {role-to-assume: "${{ vars.AWS_DEPLOYMENT_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-github-deployment' }}", aws-region: '${{ env.AWS_REGION }}'}
       - name: Snapshot database when present
         run: |
           db=$(aws cloudformation describe-stacks --stack-name aurinara-platform-production --query "Stacks[0].Outputs[?OutputKey=='DatabaseIdentifier'].OutputValue" --output text 2>/dev/null || true)
@@ -107,11 +107,11 @@ jobs:
       - name: Package and deploy foundation
         env:
           APPLICATION_IMAGE: ${{ needs.build.outputs.image }}
-          BASE_DOMAIN: ${{ vars.BASE_DOMAIN }}
+          BASE_DOMAIN: ${{ vars.BASE_DOMAIN || 'aurinara.com' }}
           DNS_PROVIDER: ${{ vars.DNS_PROVIDER || 'cloudflare' }}
           HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
-          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
-          COGNITO_DOMAIN_PREFIX: ${{ vars.COGNITO_DOMAIN_PREFIX }}
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN || 'arn:aws:acm:us-east-1:730335504220:certificate/57c0420d-a384-43ae-97c2-e7a6bb461b6c' }}
+          COGNITO_DOMAIN_PREFIX: aurinara-730335504220
           SES_SOURCE_ARN: ${{ vars.SES_SOURCE_ARN }}
           COGNITO_FROM_ADDRESS: ${{ vars.COGNITO_FROM_ADDRESS }}
           MALWARE_SCANNER_URL: ${{ vars.MALWARE_SCANNER_URL }}
@@ -120,9 +120,9 @@ jobs:
           AURINARA_CONSUMER_VPC_CIDR: 10.60.0.0/16
           EDC_CONSUMER_VPC_CIDR: 10.70.0.0/16
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
-          CLOUDFORMATION_EXECUTION_ROLE_ARN: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE_ARN }}
+          CLOUDFORMATION_EXECUTION_ROLE_ARN: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-cloudformation-execution' }}
         run: |
-          aws cloudformation package --template-file infra/cloudformation/environment.yaml --s3-bucket "${{ vars.TEMPLATE_BUCKET_NAME }}" --s3-prefix "templates/${GITHUB_SHA}" --output-template-file packaged.yaml
+          aws cloudformation package --template-file infra/cloudformation/environment.yaml --s3-bucket "${{ vars.TEMPLATE_BUCKET_NAME || 'aurinara-platform-bootstrap-templatebucket-iynthwph0ib0' }}" --s3-prefix "templates/${GITHUB_SHA}" --output-template-file packaged.yaml
           bash scripts/aws-deploy-environment.sh aurinara-platform-production production 10.50.0.0/16 db.m7g.large
           aws cloudformation update-termination-protection --enable-termination-protection --stack-name aurinara-platform-production
       - name: Configure Cloudflare DNS-only CNAME
@@ -148,7 +148,7 @@ jobs:
           VITE_OIDC_AUTHORIZE_URL: ${{ env.AUTHORIZE_URL }}
           VITE_OIDC_TOKEN_URL: ${{ env.TOKEN_URL }}
           VITE_OIDC_CLIENT_ID: ${{ env.PLATFORM_SPA_CLIENT_ID }}
-          VITE_OIDC_REDIRECT_URI: https://platform.${{ vars.BASE_DOMAIN }}/auth/callback
+          VITE_OIDC_REDIRECT_URI: https://platform.${{ vars.BASE_DOMAIN || 'aurinara.com' }}/auth/callback
           VITE_OIDC_SCOPES: openid profile email
           VITE_MANAGED_LOGIN_ONLY: 'true'
         run: npm ci && npm run build
@@ -157,4 +157,4 @@ jobs:
           distribution=$(aws cloudformation describe-stacks --stack-name aurinara-platform-production --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
           aws s3 sync frontend/dist "s3://${bucket}" --delete
           aws cloudfront create-invalidation --distribution-id "$distribution" --paths '/*'
-          curl --fail --retry 12 --retry-delay 10 "https://platform.${{ vars.BASE_DOMAIN }}/health/live"
+          curl --fail --retry 12 --retry-delay 10 "https://platform.${{ vars.BASE_DOMAIN || 'aurinara.com' }}/health/live"

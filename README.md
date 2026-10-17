@@ -1,37 +1,9 @@
 # Aurinara Platform Control Plane
 
-Production AWS topology, shared-foundation ownership, and release instructions
-are documented in [`docs/aws-deployment.md`](docs/aws-deployment.md).
-
 Independent shared service for Aurinara identity mapping, canonical study identity,
 study/site-scoped authorization decisions, and immutable cross-product objects.
 Product databases never import this service's ORM models and never receive object-store
 credentials or keys.
-
-## Central Repository
-
-Platform is the system of record for the shared Repository. It stores immutable,
-checksum-addressed bytes separately from logical files and folders. Logical files
-have append-only versions, product provenance, retention metadata, and an explicit
-study/site permission envelope.
-
-The Repository API is rooted at `/v1/studies/{study_id}/repository`. A caller must
-hold `platform.repository.read` or `platform.repository.write` and the permission
-declared by the source product. The Platform console owns upload, folders, rename,
-archive/restore, version history, and download. Aurinara and EDC call the same API
-with the signed-in user's token and expose only their explicit binding action.
-
-Published entries are organized consistently as
-`Study / Module / Solution / Purpose / File`. Platform creates these structural
-folders idempotently from declared publication metadata. The Solution key contains
-the stable owning aggregate ID, so two workbenches never share a folder; its label
-uses the product-supplied code and name. For example, an Aurinara source appears
-under `Study / Raw / RAW-01 · Primary Raw / Source Files`; its original access
-envelope and provenance remain attached to the file entry.
-
-Configure `OIDC_USER_AUDIENCES` with every frontend audience and `CORS_ORIGINS`
-with the three exact frontend origins. Product service credentials are limited to
-object publication and reference management.
 
 ## Local development
 
@@ -52,8 +24,8 @@ the local product roles used to exercise the cross-product runtime:
 python scripts/bootstrap_local_product_access.py
 ```
 
-This command is rejected outside `ENVIRONMENT=development`. Production assignments must
-continue to come from reviewed migration snapshots or explicit administrative actions.
+This command is rejected outside `ENVIRONMENT=development`. Production roles and
+assignments must continue to come from reviewed migration snapshots.
 
 The API is under `/v1`; OpenAPI is at `/v1/openapi.json`. Configure a development OIDC
 issuer matching `.env.example`. Production refuses default object credentials or a disabled
@@ -108,21 +80,10 @@ namespaced permissions, and scoped assignments. Existing UUIDs are preserved. An
 OIDC subject, or study-code conflict aborts the transaction; the importer never guesses a
 match. Re-running an identical snapshot is idempotent.
 
-EDC registers its product-owned permission vocabulary through
-`PUT /v1/products/aurinara-edc/permissions`. Platform owns role names, scopes, status, and
-permission composition. Administrators configure those roles in **Roles & permissions**;
-every change requires a reason, advances the policy version, and emits a role projection
-event. System-scoped roles are assigned in Product Access, while study- and site-scoped
-roles are assigned in Memberships. The former product role-sync endpoint now rejects
-writes so a product deployment cannot overwrite centrally reviewed policy.
-CTMS-created Sites are registered under the matching canonical Study through the EDC
-service account. Memberships list those active Sites by name and persist their stable UUID.
-
 Product API service accounts are normal registered OIDC identities. Grant them
 `platform.authorization.decide` and only their product's `*.object.upload`,
-`*.object.download`, and `*.object.reference` permissions. The EDC service account also
-requires `edc.permission.sync` and `edc.site.sync`. End-user tokens are never exchanged for
-bucket credentials.
+`*.object.download`, and `*.object.reference` permissions. End-user tokens are never
+exchanged for bucket credentials.
 
 Run `python scripts/publish_outbox.py --watch` from a supervised worker. The local
 Compose stack provides the equivalent `outbox-publisher` service, so
