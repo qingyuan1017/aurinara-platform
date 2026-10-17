@@ -92,9 +92,11 @@ aws ec2 describe-vpc-endpoint-service-configurations \
 ```
 
 The state must be `verified`. The Platform stack outputs are the authoritative
-inputs for consumers: `PlatformPrivateLinkServiceName`, `PlatformPrivateUrl`,
-`EventBusName`, the shared identity key ARN, user-pool/client IDs, token and
-issuer URLs, and the two product service-client secret ARNs.
+inputs for consumers: `VpcId`, `VpcCidr`, the application/runner/data subnet
+IDs, `PlatformPrivateLinkServiceName`, `PlatformPrivateUrl`, `EventBusName`, the
+shared identity key ARN, user-pool/client IDs, token and issuer URLs, and the two
+product service-client secret ARNs. Consumers create their own security groups
+and data services inside the matching Platform environment's network.
 
 ## Deployment order
 
