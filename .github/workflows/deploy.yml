@@ -52,7 +52,7 @@ jobs:
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           CLOUDFORMATION_EXECUTION_ROLE_ARN: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-cloudformation-execution' }}
         run: |
-          aws cloudformation package --template-file infra/cloudformation/environment.yaml --s3-bucket "${{ vars.TEMPLATE_BUCKET_NAME || 'aurinara-platform-bootstrap-templatebucket-iynthwph0ib0' }}" --s3-prefix "templates/${GITHUB_SHA}" --output-template-file packaged.yaml
+          bash scripts/aws-package-nested-templates.sh infra/cloudformation/environment.yaml "${{ vars.TEMPLATE_BUCKET_NAME || 'aurinara-platform-bootstrap-templatebucket-iynthwph0ib0' }}" "templates/${GITHUB_SHA}" packaged.yaml
           bash scripts/aws-deploy-environment.sh aurinara-platform-staging staging 10.20.0.0/16 db.t4g.medium
       - name: Configure Cloudflare DNS-only CNAME
         if: ${{ vars.DNS_PROVIDER != 'route53' }}
@@ -122,7 +122,7 @@ jobs:
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           CLOUDFORMATION_EXECUTION_ROLE_ARN: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-cloudformation-execution' }}
         run: |
-          aws cloudformation package --template-file infra/cloudformation/environment.yaml --s3-bucket "${{ vars.TEMPLATE_BUCKET_NAME || 'aurinara-platform-bootstrap-templatebucket-iynthwph0ib0' }}" --s3-prefix "templates/${GITHUB_SHA}" --output-template-file packaged.yaml
+          bash scripts/aws-package-nested-templates.sh infra/cloudformation/environment.yaml "${{ vars.TEMPLATE_BUCKET_NAME || 'aurinara-platform-bootstrap-templatebucket-iynthwph0ib0' }}" "templates/${GITHUB_SHA}" packaged.yaml
           bash scripts/aws-deploy-environment.sh aurinara-platform-production production 10.50.0.0/16 db.m7g.large
           aws cloudformation update-termination-protection --enable-termination-protection --stack-name aurinara-platform-production
       - name: Configure Cloudflare DNS-only CNAME
