@@ -206,6 +206,10 @@ Outputs:
   CognitoDomain: {Value: !GetAtt Identity.Outputs.CognitoDomain}
   ClusterName: {Value: !GetAtt Compute.Outputs.ClusterName}
   MigrationTaskDefinitionArn: {Value: !GetAtt Compute.Outputs.MigrationTaskDefinitionArn}
+  VpcId: {Value: !GetAtt Network.Outputs.VpcId}
+  VpcCidr: {Value: !GetAtt Network.Outputs.VpcCidr}
   AppSubnetIds: {Value: !GetAtt Network.Outputs.AppSubnetIds}
+  RunnerSubnetIds: {Value: !GetAtt Network.Outputs.RunnerSubnetIds}
+  DataSubnetIds: {Value: !GetAtt Network.Outputs.DataSubnetIds}
   WorkerSecurityGroupId: {Value: !GetAtt Network.Outputs.WorkerSecurityGroupId}
   DatabaseIdentifier: {Value: !GetAtt Data.Outputs.DatabaseIdentifier}

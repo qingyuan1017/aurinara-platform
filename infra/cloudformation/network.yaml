@@ -163,6 +163,7 @@ Resources:
       GroupDescription: Interface VPC endpoints
       VpcId: !Ref Vpc
       SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref VpcCidr}
         - {IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref ApiSecurityGroup}
         - {IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref WorkerSecurityGroup}
         - {IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref IntegrationSecurityGroup}
