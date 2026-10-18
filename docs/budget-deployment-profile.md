@@ -99,6 +99,11 @@ clean-data cutover unless an operator first performs a separately reviewed resto
 or migration into the new database. Changing Multi-AZ or instance class can also
 restart a database when replacement is not required.
 
+During a profile change, deployment phase one scales application services to zero
+before replacing the database. It then runs the migration task against the new
+database and re-enables services only after that task succeeds. Ordinary releases
+within the same profile keep the existing service availability behavior.
+
 1. Redeploy each repository's bootstrap template once. This adds the
    `cloudformation:DeleteStack` permission used by the staging-removal workflow.
 2. Merge and deploy `aurinara-platform` with `DEPLOYMENT_PROFILE=budget`.

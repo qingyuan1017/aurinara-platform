@@ -55,10 +55,19 @@ deploy() {
 
 current_image=$APPLICATION_IMAGE
 services_enabled=false
+current_profile=standard
 if aws cloudformation describe-stacks --stack-name "$stack_name" >/dev/null 2>&1; then
   current_image=$(aws cloudformation describe-stacks --stack-name "$stack_name" --query "Stacks[0].Parameters[?ParameterKey=='ApplicationImage'].ParameterValue" --output text)
   services_enabled=$(aws cloudformation describe-stacks --stack-name "$stack_name" --query "Stacks[0].Parameters[?ParameterKey=='ServicesEnabled'].ParameterValue" --output text)
   [[ "$services_enabled" == true ]] || services_enabled=false
+  current_profile=$(aws cloudformation describe-stacks --stack-name "$stack_name" --query "Stacks[0].Parameters[?ParameterKey=='DeploymentProfile'].ParameterValue" --output text)
+  [[ -n "$current_profile" && "$current_profile" != None ]] || current_profile=standard
+fi
+
+# A profile switch can replace the database. Drain services before the
+# replacement, migrate the new database, and re-enable them in phase two.
+if [[ "$deployment_profile" != "$current_profile" ]]; then
+  services_enabled=false
 fi
 
 # Register the migration image while an existing service keeps its old digest.
