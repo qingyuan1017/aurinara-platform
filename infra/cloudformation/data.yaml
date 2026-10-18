@@ -40,6 +40,14 @@ Resources:
             Action: [kms:GenerateDataKey*, kms:DescribeKey]
             Resource: '*'
             Condition: {StringEquals: {'aws:SourceArn': !Sub 'arn:${AWS::Partition}:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/aurinara-platform-${Environment}'}}
+          - Sid: CloudFrontFrontendRead
+            Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: kms:Decrypt
+            Resource: '*'
+            Condition:
+              StringEquals: {'aws:SourceAccount': !Ref 'AWS::AccountId'}
+              ArnLike: {'aws:SourceArn': !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*'}
   DataKeyAlias:
     Type: AWS::KMS::Alias
     Properties: {AliasName: !Sub 'alias/aurinara-platform-${Environment}', TargetKeyId: !Ref DataKey}
