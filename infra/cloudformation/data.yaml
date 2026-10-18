@@ -83,7 +83,10 @@ Resources:
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Snapshot
     Properties:
-      DBInstanceIdentifier: !Sub aurinara-platform-${Environment}
+      DBInstanceIdentifier: !If
+        - IsBudget
+        - !Sub aurinara-platform-${Environment}-budget
+        - !Sub aurinara-platform-${Environment}
       Engine: postgres
       EngineVersion: '16.9'
       DBName: aurinara_platform

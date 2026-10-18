@@ -92,8 +92,12 @@ are the most likely sources of variance.
 ## Deployment sequence
 
 The first transition changes networking and databases and must use a maintenance
-window. Production workflows snapshot RDS before applying the change. Changing
-Multi-AZ to Single-AZ or changing instance class can restart the database.
+window. Production workflows snapshot RDS before applying the change. RDS cannot
+shrink allocated storage in place, so a budget deployment uses a profile-specific
+`-budget` database identifier and replaces an existing larger database. This is a
+clean-data cutover unless an operator first performs a separately reviewed restore
+or migration into the new database. Changing Multi-AZ or instance class can also
+restart a database when replacement is not required.
 
 1. Redeploy each repository's bootstrap template once. This adds the
    `cloudformation:DeleteStack` permission used by the staging-removal workflow.
