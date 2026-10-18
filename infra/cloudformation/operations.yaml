@@ -121,12 +121,16 @@ Resources:
       IsMultiRegionTrail: true
       IncludeGlobalServiceEvents: true
       EnableLogFileValidation: true
-      EventSelectors:
-        - ReadWriteType: All
-          IncludeManagementEvents: true
-          DataResources:
-            - Type: AWS::S3::Object
-              Values: !If
+      AdvancedEventSelectors:
+        - Name: Management events
+          FieldSelectors:
+            - {Field: eventCategory, Equals: [Management]}
+        - Name: Aurinara S3 object data events
+          FieldSelectors:
+            - {Field: eventCategory, Equals: [Data]}
+            - {Field: resources.type, Equals: [AWS::S3::Object]}
+            - Field: resources.ARN
+              StartsWith: !If
                 - IsProduction
                 - [!Sub 'arn:${AWS::Partition}:s3:::aurinara-']
                 - [!Sub 'arn:${AWS::Partition}:s3:::${ObjectBucketName}/']
