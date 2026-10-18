@@ -7,6 +7,11 @@ service. Aurinara and Aurinara EDC consume the published stack outputs; they do
 not create independent identity providers or publish directly into product
 databases.
 
+Platform also owns the suite CloudTrail resources. The production trail records
+management events and S3 object data events for every bucket in the account;
+the staging trail retains Platform-staging object coverage. Consumer stacks do
+not create trails, avoiding the non-adjustable five-trails-per-region limit.
+
 ## Required external inputs
 
 - AWS account and `us-east-1` deployment region.

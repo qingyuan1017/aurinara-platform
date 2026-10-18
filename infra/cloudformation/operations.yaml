@@ -15,6 +15,7 @@ Parameters:
 
 Conditions:
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
+  IsProduction: !Equals [!Ref Environment, production]
 
 Resources:
   AlarmTopic:
@@ -106,7 +107,12 @@ Resources:
       EventSelectors:
         - ReadWriteType: All
           IncludeManagementEvents: true
-          DataResources: [{Type: AWS::S3::Object, Values: [!Sub 'arn:${AWS::Partition}:s3:::${ObjectBucketName}/']}]
+          DataResources:
+            - Type: AWS::S3::Object
+              Values: !If
+                - IsProduction
+                - [!Sub 'arn:${AWS::Partition}:s3:::']
+                - [!Sub 'arn:${AWS::Partition}:s3:::${ObjectBucketName}/']
   AuditLogPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
