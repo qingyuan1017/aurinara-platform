@@ -49,6 +49,15 @@ The AWS migration task runs the service-account bootstrap automatically with the
 Cognito client IDs created by the environment stack. The command above remains
 available for local development and is safe to rerun.
 
+Confirmed Cognito users are registered automatically in Platform with no roles or
+study/site assignments. Cognito's post-confirmation trigger writes a minimal,
+KMS-encrypted SQS message, and the supervised `identity-registration` worker creates
+the idempotent Platform identity and normal user event. Every AWS migration task also
+reconciles all confirmed, enabled users already present in the environment's user pool,
+so users created before the trigger was installed are backfilled safely. Registration
+never grants product access; an administrator must still assign system roles in
+**Product access** and study/site roles in **Memberships**.
+
 After the first development administrator has signed in, grant that administrator
 the local product roles used to exercise the cross-product runtime:
 
@@ -134,6 +143,14 @@ Compose stack provides the equivalent `outbox-publisher` service, so
 Delivery is at least once;
 consumers persist event IDs and aggregate sequences before acknowledging their queue
 messages. Membership and account events also invalidate product authorization caches.
+
+For a local SQS-compatible queue, consume one batch or keep the identity-registration
+worker running with:
+
+```powershell
+python scripts/sync_cognito_users.py
+python scripts/sync_cognito_users.py --watch
+```
 
 ## Runtime connections
 

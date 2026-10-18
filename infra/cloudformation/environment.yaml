@@ -116,10 +116,13 @@ Resources:
         JwtIssuer: !GetAtt Identity.Outputs.JwtIssuer
         JwtJwksUrl: !GetAtt Identity.Outputs.JwtJwksUrl
         PlatformSpaClientId: !GetAtt Identity.Outputs.PlatformSpaClientId
+        UserPoolId: !GetAtt Identity.Outputs.UserPoolId
         UserAudiences: !GetAtt Identity.Outputs.UserAudiences
         ServiceClientIds: !GetAtt Identity.Outputs.ServiceClientIds
         AurinaraServiceClientId: !GetAtt Identity.Outputs.AurinaraServiceClientId
         EdcServiceClientId: !GetAtt Identity.Outputs.EdcServiceClientId
+        IdentityRegistrationQueueArn: !GetAtt Identity.Outputs.IdentityRegistrationQueueArn
+        IdentityRegistrationQueueUrl: !GetAtt Identity.Outputs.IdentityRegistrationQueueUrl
         BrowserOrigins: !Sub
           - 'https://${Platform}.${BaseDomain},https://${Aurinara}.${BaseDomain},https://${Edc}.${BaseDomain}'
           - Platform: !If [IsProduction, platform, platform-staging]
@@ -166,6 +169,7 @@ Resources:
         ObjectBucketName: !GetAtt Data.Outputs.ObjectBucketName
         AccessLogBucketName: !GetAtt Data.Outputs.AccessLogBucketName
         DataKeyArn: !GetAtt Data.Outputs.DataKeyArn
+        IdentityRegistrationDeadLetterQueueName: !GetAtt Identity.Outputs.IdentityRegistrationDeadLetterQueueName
 
   ConsumerEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -230,4 +234,5 @@ Outputs:
   RunnerSubnetIds: {Value: !GetAtt Network.Outputs.RunnerSubnetIds}
   DataSubnetIds: {Value: !GetAtt Network.Outputs.DataSubnetIds}
   WorkerSecurityGroupId: {Value: !GetAtt Network.Outputs.WorkerSecurityGroupId}
+  IdentityRegistrationQueueUrl: {Value: !GetAtt Identity.Outputs.IdentityRegistrationQueueUrl}
   DatabaseIdentifier: {Value: !GetAtt Data.Outputs.DatabaseIdentifier}

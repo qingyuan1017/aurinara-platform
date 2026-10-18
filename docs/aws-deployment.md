@@ -109,6 +109,22 @@ interchangeable: Platform reserves their `client_id` validation path for
 registered service clients. The console stores only a same-origin return path
 with the PKCE transaction and restores it after a successful callback.
 
+### Automatic zero-access registration
+
+After Cognito confirms a new user, its post-confirmation Lambda writes a minimal
+versioned identity message to the environment's KMS-encrypted registration queue.
+The Platform `identity-registration` worker validates the exact issuer and creates
+the user and `platform.user.created.v1` outbox event in one database transaction.
+It creates no role, product, study, or site assignment. Duplicate trigger delivery
+is idempotent by `(issuer, subject)`; failed messages retry and move to the encrypted
+dead-letter queue after five receives.
+
+The deployment migration task also lists confirmed, enabled users from the exact
+environment user pool and reconciles missing identities before the new services roll
+out. This backfills users created before the trigger was installed and remains safe to
+rerun. Administrators grant access only after reviewing the populated user in Product
+Access or Memberships.
+
 ### Initial administrator
 
 Production never grants access merely because an identity is the first person

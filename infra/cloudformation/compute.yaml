@@ -19,10 +19,13 @@ Parameters:
   JwtIssuer: {Type: String}
   JwtJwksUrl: {Type: String}
   PlatformSpaClientId: {Type: String}
+  UserPoolId: {Type: String}
   UserAudiences: {Type: String}
   ServiceClientIds: {Type: String}
   AurinaraServiceClientId: {Type: String}
   EdcServiceClientId: {Type: String}
+  IdentityRegistrationQueueArn: {Type: String}
+  IdentityRegistrationQueueUrl: {Type: String}
   BrowserOrigins: {Type: String}
   MalwareScannerUrl: {Type: String, Default: ''}
   MalwareScannerTokenSecretArn:
@@ -36,6 +39,10 @@ Parameters:
 Conditions:
   IsProduction: !Equals [!Ref Environment, production]
   ServicesActive: !Equals [!Ref ServicesEnabled, 'true']
+  ApplicationImageReady: !Equals [!Ref ApplicationImage, !Ref MigrationApplicationImage]
+  IdentityRegistrationActive: !And
+    - !Condition ServicesActive
+    - !Condition ApplicationImageReady
   HasMalwareScanner: !Equals [!Ref MalwareScanRequired, 'true']
 
 Resources:
@@ -88,6 +95,12 @@ Resources:
                 Resource: [!Sub 'arn:${AWS::Partition}:s3:::${ObjectBucketName}', !Sub 'arn:${AWS::Partition}:s3:::${ObjectBucketName}/*']
               - {Effect: Allow, Action: ['kms:Decrypt', 'kms:Encrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'], Resource: !Ref DataKeyArn}
               - {Effect: Allow, Action: 'events:PutEvents', Resource: !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/${EventBusName}'}
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes]
+                Resource: !Ref IdentityRegistrationQueueArn
+              - Effect: Allow
+                Action: cognito-idp:ListUsers
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${UserPoolId}'
 
   InternalLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -207,6 +220,7 @@ Resources:
             - {Name: MALWARE_SCAN_REQUIRED, Value: !Ref MalwareScanRequired}
             - {Name: EVENTBRIDGE_BUS_NAME, Value: !Ref EventBusName}
             - {Name: EVENTBRIDGE_SOURCE, Value: aurinara.platform}
+            - {Name: IDENTITY_REGISTRATION_QUEUE_URL, Value: !Ref IdentityRegistrationQueueUrl}
             - {Name: CORS_ORIGINS, Value: !Ref BrowserOrigins}
             - {Name: BOOTSTRAP_FIRST_USER_AS_ADMIN, Value: 'false'}
           Secrets: &ApplicationSecrets
@@ -261,6 +275,40 @@ Resources:
       LaunchType: FARGATE
       DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 50, MaximumPercent: 200}
       NetworkConfiguration: {AwsvpcConfiguration: {AssignPublicIp: DISABLED, SecurityGroups: [!Ref WorkerSecurityGroupId], Subnets: !Ref AppSubnetIds}}
+  IdentityRegistrationTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub aurinara-platform-${Environment}-identity-registration
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ApplicationTaskRole.Arn
+      ContainerDefinitions:
+        - Name: identity-registration
+          Image: !Ref ApplicationImage
+          Command: [python, scripts/aws_entrypoint.py, python, scripts/sync_cognito_users.py, --watch]
+          Essential: true
+          ReadonlyRootFilesystem: true
+          Environment: *ApplicationEnvironment
+          Secrets: *ApplicationSecrets
+          LinuxParameters: {InitProcessEnabled: true, Capabilities: {Drop: [ALL]}}
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref ApplicationLogGroup, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: identity-registration}}
+  IdentityRegistrationService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: identity-registration
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref IdentityRegistrationTaskDefinition
+      # Deployment first registers the migration image while existing services keep
+      # their old digest. Start this new worker only after the second phase switches
+      # ApplicationImage to that successfully migrated image.
+      DesiredCount: !If [IdentityRegistrationActive, 1, 0]
+      LaunchType: FARGATE
+      DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 0, MaximumPercent: 200}
+      NetworkConfiguration: {AwsvpcConfiguration: {AssignPublicIp: DISABLED, SecurityGroups: [!Ref WorkerSecurityGroupId], Subnets: !Ref AppSubnetIds}}
+
   MigrationTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -282,7 +330,8 @@ Resources:
             - !Sub >-
                 alembic upgrade head && python scripts/bootstrap_service_accounts.py
                 --aurinara-client-id ${AurinaraServiceClientId}
-                --edc-client-id ${EdcServiceClientId}
+                --edc-client-id ${EdcServiceClientId} && python scripts/sync_cognito_users.py
+                --backfill --user-pool-id ${UserPoolId}
           Essential: true
           ReadonlyRootFilesystem: true
           Environment: *ApplicationEnvironment

@@ -28,8 +28,110 @@ Rules:
         AssertDescription: SesSourceArn and CognitoFromAddress must be supplied together or both omitted.
 
 Resources:
+  IdentityRegistrationDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub aurinara-platform-${Environment}-identity-registration-dlq
+      KmsMasterKeyId: !Ref DataKeyArn
+      MessageRetentionPeriod: 1209600
+  IdentityRegistrationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub aurinara-platform-${Environment}-identity-registration
+      KmsMasterKeyId: !Ref DataKeyArn
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IdentityRegistrationDeadLetterQueue.Arn
+        maxReceiveCount: 5
+  IdentityRegistrationFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}
+      Policies:
+        - PolicyName: publish-confirmed-identities
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt IdentityRegistrationQueue.Arn
+              - Effect: Allow
+                Action: [kms:Decrypt, kms:GenerateDataKey, kms:DescribeKey]
+                Resource: !Ref DataKeyArn
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/aurinara-platform-${Environment}-identity-registration:*'
+  IdentityRegistrationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub aurinara-platform-${Environment}-identity-registration
+      Description: Enqueue confirmed Cognito identities for zero-access Platform registration.
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt IdentityRegistrationFunctionRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables: {QUEUE_URL: !Ref IdentityRegistrationQueue}
+      Code:
+        ZipFile: |
+          import json
+          import os
+          from datetime import UTC, datetime
+
+          import boto3
+
+          sqs = boto3.client("sqs")
+
+
+          def handler(event, context):
+              if event.get("triggerSource") != "PostConfirmation_ConfirmSignUp":
+                  return event
+              attributes = event.get("request", {}).get("userAttributes", {})
+              subject = attributes.get("sub")
+              email = attributes.get("email")
+              user_pool_id = event.get("userPoolId")
+              if not subject or not email or not user_pool_id:
+                  raise ValueError("confirmed identity is missing required attributes")
+              region = os.environ["AWS_REGION"]
+              message = {
+                  "schema_version": "1.0.0",
+                  "event_id": context.aws_request_id,
+                  "issuer": f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}",
+                  "subject": subject,
+                  "email": email,
+                  "display_name": attributes.get("name") or email,
+                  "confirmed_at": datetime.now(UTC).isoformat(),
+              }
+              sqs.send_message(
+                  QueueUrl=os.environ["QUEUE_URL"],
+                  MessageBody=json.dumps(message, separators=(",", ":")),
+              )
+              return event
+  IdentityRegistrationLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/aurinara-platform-${Environment}-identity-registration
+      RetentionInDays: !If [IsProduction, 365, 90]
+      KmsKeyId: !Ref DataKeyArn
+  IdentityRegistrationInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref IdentityRegistrationFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
   UserPool:
     Type: AWS::Cognito::UserPool
+    DependsOn: IdentityRegistrationInvokePermission
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -52,6 +154,7 @@ Resources:
       Schema: [{Name: email, AttributeDataType: String, Mutable: true, Required: true}]
       UserAttributeUpdateSettings: {AttributesRequireVerificationBeforeUpdate: [email]}
       VerificationMessageTemplate: {DefaultEmailOption: CONFIRM_WITH_CODE}
+      LambdaConfig: {PostConfirmation: !GetAtt IdentityRegistrationFunction.Arn}
       EmailConfiguration: !If
         - HasCustomEmailSender
         - EmailSendingAccount: DEVELOPER
@@ -172,3 +275,6 @@ Outputs:
   TokenUrl: {Value: !Sub 'https://${DomainPrefix}.auth.${AWS::Region}.amazoncognito.com/oauth2/token'}
   LogoutUrl: {Value: !Sub 'https://${DomainPrefix}.auth.${AWS::Region}.amazoncognito.com/logout'}
   CognitoDomain: {Value: !Sub '${DomainPrefix}.auth.${AWS::Region}.amazoncognito.com'}
+  IdentityRegistrationQueueArn: {Value: !GetAtt IdentityRegistrationQueue.Arn}
+  IdentityRegistrationQueueUrl: {Value: !Ref IdentityRegistrationQueue}
+  IdentityRegistrationDeadLetterQueueName: {Value: !GetAtt IdentityRegistrationDeadLetterQueue.QueueName}

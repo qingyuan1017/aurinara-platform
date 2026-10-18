@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     eventbridge_bus_name: str | None = None
     eventbridge_source: str = "aurinara.platform"
     eventbridge_endpoint_url: str | None = None
+    identity_registration_queue_url: str | None = None
     cors_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:5175"
 
     @property

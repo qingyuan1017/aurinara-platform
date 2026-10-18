@@ -12,6 +12,7 @@ Parameters:
   ObjectBucketName: {Type: String}
   AccessLogBucketName: {Type: String}
   DataKeyArn: {Type: String}
+  IdentityRegistrationDeadLetterQueueName: {Type: String}
 
 Conditions:
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
@@ -80,6 +81,20 @@ Resources:
       Threshold: 80
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+  IdentityRegistrationDeadLetters:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-identity-registration-dead-letters
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{Name: QueueName, Value: !Ref IdentityRegistrationDeadLetterQueueName}]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
   Dashboard:
     Type: AWS::CloudWatch::Dashboard
