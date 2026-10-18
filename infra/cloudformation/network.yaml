@@ -4,9 +4,15 @@ Description: Aurinara Platform two-AZ network and restricted service endpoints.
 Parameters:
   Environment: {Type: String, AllowedValues: [staging, production]}
   VpcCidr: {Type: String}
+  DeploymentProfile: {Type: String, AllowedValues: [standard, budget], Default: standard}
 
 Conditions:
   IsProduction: !Equals [!Ref Environment, production]
+  IsBudget: !Equals [!Ref DeploymentProfile, budget]
+  UseSecondNat: !And
+    - !Condition IsProduction
+    - !Not [!Condition IsBudget]
+  UseFullPrivateEndpoints: !Not [!Condition IsBudget]
 
 Resources:
   Vpc:
@@ -86,12 +92,12 @@ Resources:
   NatGatewayA: {Type: AWS::EC2::NatGateway, Properties: {SubnetId: !Ref PublicSubnetA, AllocationId: !GetAtt NatEipA.AllocationId}}
   NatEipB:
     Type: AWS::EC2::EIP
-    Condition: IsProduction
+    Condition: UseSecondNat
     DependsOn: GatewayAttachment
     Properties: {Domain: vpc}
   NatGatewayB:
     Type: AWS::EC2::NatGateway
-    Condition: IsProduction
+    Condition: UseSecondNat
     Properties: {SubnetId: !Ref PublicSubnetB, AllocationId: !GetAtt NatEipB.AllocationId}
   AppRouteTableA: {Type: AWS::EC2::RouteTable, Properties: {VpcId: !Ref Vpc}}
   AppRouteTableB: {Type: AWS::EC2::RouteTable, Properties: {VpcId: !Ref Vpc}}
@@ -101,7 +107,7 @@ Resources:
     Properties:
       RouteTableId: !Ref AppRouteTableB
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !If [IsProduction, !Ref NatGatewayB, !Ref NatGatewayA]
+      NatGatewayId: !If [UseSecondNat, !Ref NatGatewayB, !Ref NatGatewayA]
   AppSubnetARoute: {Type: AWS::EC2::SubnetRouteTableAssociation, Properties: {SubnetId: !Ref AppSubnetA, RouteTableId: !Ref AppRouteTableA}}
   AppSubnetBRoute: {Type: AWS::EC2::SubnetRouteTableAssociation, Properties: {SubnetId: !Ref AppSubnetB, RouteTableId: !Ref AppRouteTableB}}
   RunnerRouteTable: {Type: AWS::EC2::RouteTable, Properties: {VpcId: !Ref Vpc}}
@@ -205,12 +211,21 @@ Resources:
       ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
       VpcEndpointType: Gateway
       RouteTableIds: [!Ref AppRouteTableA, !Ref AppRouteTableB, !Ref RunnerRouteTable]
-  EcrApiEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
-  EcrDkrEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
-  LogsEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
-  SecretsEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
-  SqsEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.sqs', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
-  EcsEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecs', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
+  EcrApiEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: !If [IsBudget, [!Ref AppSubnetA], [!Ref AppSubnetA, !Ref AppSubnetB]], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
+  EcrDkrEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: !If [IsBudget, [!Ref AppSubnetA], [!Ref AppSubnetA, !Ref AppSubnetB]], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
+  LogsEndpoint: {Type: AWS::EC2::VPCEndpoint, Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: !If [IsBudget, [!Ref AppSubnetA], [!Ref AppSubnetA, !Ref AppSubnetB]], SecurityGroupIds: [!Ref EndpointSecurityGroup]}}
+  SecretsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: UseFullPrivateEndpoints
+    Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}
+  SqsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: UseFullPrivateEndpoints
+    Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.sqs', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}
+  EcsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: UseFullPrivateEndpoints
+    Properties: {VpcId: !Ref Vpc, ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecs', VpcEndpointType: Interface, PrivateDnsEnabled: true, SubnetIds: [!Ref AppSubnetA, !Ref AppSubnetB], SecurityGroupIds: [!Ref EndpointSecurityGroup]}
 Outputs:
   VpcId: {Value: !Ref Vpc}
   VpcCidr: {Value: !Ref VpcCidr}

@@ -3,6 +3,7 @@ Description: Aurinara Platform foundation stack and shared identity/control-plan
 
 Parameters:
   Environment: {Type: String, AllowedValues: [staging, production]}
+  DeploymentProfile: {Type: String, AllowedValues: [standard, budget], Default: standard}
   VpcCidr: {Type: String, Default: 10.20.0.0/16}
   BaseDomain: {Type: String}
   DnsProvider: {Type: String, AllowedValues: [cloudflare, route53], Default: cloudflare}
@@ -27,6 +28,8 @@ Parameters:
 
 Conditions:
   IsProduction: !Equals [!Ref Environment, production]
+  IsBudget: !Equals [!Ref DeploymentProfile, budget]
+  IsStandard: !Not [!Condition IsBudget]
   HasPrivateApiDnsName: !Not [!Equals [!Ref PrivateApiDnsName, '']]
   HasMalwareScanner: !Not [!Equals [!Ref MalwareScannerUrl, '']]
 
@@ -60,7 +63,7 @@ Resources:
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL: network.yaml
-      Parameters: {Environment: !Ref Environment, VpcCidr: !Ref VpcCidr}
+      Parameters: {Environment: !Ref Environment, VpcCidr: !Ref VpcCidr, DeploymentProfile: !Ref DeploymentProfile}
   Data:
     Type: AWS::CloudFormation::Stack
     Properties:
@@ -70,6 +73,7 @@ Resources:
         DataSubnetIds: !GetAtt Network.Outputs.DataSubnetIds
         DatabaseSecurityGroupId: !GetAtt Network.Outputs.DatabaseSecurityGroupId
         DatabaseInstanceClass: !Ref DatabaseInstanceClass
+        DeploymentProfile: !Ref DeploymentProfile
         BrowserOrigins: !Sub
           - 'https://${Platform}.${BaseDomain},https://${Aurinara}.${BaseDomain},https://${Edc}.${BaseDomain}'
           - Platform: !If [IsProduction, platform, platform-staging]
@@ -100,6 +104,7 @@ Resources:
       TemplateURL: compute.yaml
       Parameters:
         Environment: !Ref Environment
+        DeploymentProfile: !Ref DeploymentProfile
         ServicesEnabled: !Ref ServicesEnabled
         ApplicationImage: !Ref ApplicationImage
         MigrationApplicationImage: !Ref MigrationApplicationImage
@@ -160,6 +165,7 @@ Resources:
       TemplateURL: operations.yaml
       Parameters:
         Environment: !Ref Environment
+        DeploymentProfile: !Ref DeploymentProfile
         AlarmEmail: !Ref AlarmEmail
         ClusterName: !GetAtt Compute.Outputs.ClusterName
         ApiServiceName: !GetAtt Compute.Outputs.ApiServiceName
@@ -173,6 +179,7 @@ Resources:
 
   ConsumerEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    Condition: IsStandard
     Properties:
       GroupDescription: Shared consumer access to the Platform PrivateLink endpoint
       VpcId: !GetAtt Network.Outputs.VpcId
@@ -180,6 +187,7 @@ Resources:
         - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !GetAtt Network.Outputs.VpcCidr}
   ConsumerPlatformEndpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: IsStandard
     Properties:
       VpcId: !GetAtt Network.Outputs.VpcId
       ServiceName: !GetAtt Compute.Outputs.PrivateLinkServiceName
@@ -203,12 +211,17 @@ Outputs:
   ObjectBucketName: {Value: !GetAtt Data.Outputs.ObjectBucketName}
   EventBusName: {Value: !GetAtt Data.Outputs.EventBusName}
   EventBusArn: {Value: !GetAtt Data.Outputs.EventBusArn}
-  PlatformPrivateLinkServiceName: {Value: !GetAtt Compute.Outputs.PrivateLinkServiceName}
-  PlatformPrivateLinkServiceId: {Value: !GetAtt Compute.Outputs.PrivateLinkServiceId}
+  PlatformPrivateLinkServiceName: {Condition: IsStandard, Value: !GetAtt Compute.Outputs.PrivateLinkServiceName}
+  PlatformPrivateLinkServiceId: {Condition: IsStandard, Value: !GetAtt Compute.Outputs.PrivateLinkServiceId}
   PlatformPrivateUrl:
-    Value: !Sub
-      - 'http://${EndpointDns}'
-      - EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt ConsumerPlatformEndpoint.DnsEntries]]]
+    Value: !If
+      - IsBudget
+      - !Sub
+        - 'http://${AlbDns}'
+        - AlbDns: !GetAtt Compute.Outputs.AlbDnsName
+      - !Sub
+        - 'http://${EndpointDns}'
+        - EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt ConsumerPlatformEndpoint.DnsEntries]]]
   PlatformPrivateDnsName:
     Value: !If [HasPrivateApiDnsName, !Ref PrivateApiDnsName, !Sub 'platform.internal.${BaseDomain}']
   SharedIdentityKeyArn: {Value: !GetAtt Data.Outputs.DataKeyArn}
@@ -236,3 +249,11 @@ Outputs:
   WorkerSecurityGroupId: {Value: !GetAtt Network.Outputs.WorkerSecurityGroupId}
   IdentityRegistrationQueueUrl: {Value: !GetAtt Identity.Outputs.IdentityRegistrationQueueUrl}
   DatabaseIdentifier: {Value: !GetAtt Data.Outputs.DatabaseIdentifier}
+  DeploymentProfile: {Value: !Ref DeploymentProfile}
+  SharedAlbArn: {Value: !GetAtt Compute.Outputs.AlbArn}
+  SharedAlbDnsName: {Value: !GetAtt Compute.Outputs.AlbDnsName}
+  SharedAlbFullName: {Value: !GetAtt Compute.Outputs.AlbFullName}
+  SharedAlbListenerArn: {Value: !GetAtt Compute.Outputs.ListenerArn}
+  SharedAlbSecurityGroupId: {Value: !GetAtt Compute.Outputs.AlbSecurityGroupId}
+  SharedWebAclArn: {Value: !GetAtt Edge.Outputs.WebAclArn}
+  SharedVpcOriginId: {Value: !GetAtt Edge.Outputs.VpcOriginId}

@@ -3,6 +3,7 @@ Description: Aurinara Platform ECS API, outbox publisher, migrations, ALB, and P
 
 Parameters:
   Environment: {Type: String, AllowedValues: [staging, production]}
+  DeploymentProfile: {Type: String, AllowedValues: [standard, budget], Default: standard}
   ServicesEnabled: {Type: String, AllowedValues: ['true', 'false'], Default: 'false'}
   ApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
   MigrationApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
@@ -38,6 +39,8 @@ Parameters:
 
 Conditions:
   IsProduction: !Equals [!Ref Environment, production]
+  IsBudget: !Equals [!Ref DeploymentProfile, budget]
+  IsStandard: !Not [!Condition IsBudget]
   ServicesActive: !Equals [!Ref ServicesEnabled, 'true']
   ApplicationImageReady: !Equals [!Ref ApplicationImage, !Ref MigrationApplicationImage]
   IdentityRegistrationActive: !And
@@ -50,7 +53,7 @@ Resources:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Sub aurinara-platform-${Environment}
-      ClusterSettings: [{Name: containerInsights, Value: enhanced}]
+      ClusterSettings: [{Name: containerInsights, Value: !If [IsBudget, disabled, enhanced]}]
       Configuration: {ExecuteCommandConfiguration: {Logging: NONE}}
   ApplicationLogGroup:
     Type: AWS::Logs::LogGroup
@@ -58,7 +61,7 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub /aurinara-platform/${Environment}/application
-      RetentionInDays: !If [IsProduction, 365, 90]
+      RetentionInDays: !If [IsBudget, 30, !If [IsProduction, 365, 90]]
       KmsKeyId: !Ref DataKeyArn
   TaskExecutionRole:
     Type: AWS::IAM::Role
@@ -133,6 +136,7 @@ Resources:
 
   PrivateLinkLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: IsStandard
     Properties:
       Name: !Sub ap-${Environment}-nlb
       Scheme: internal
@@ -140,12 +144,15 @@ Resources:
       Subnets: !Ref AppSubnetIds
   AurinaraPrivateLinkIngress:
     Type: AWS::EC2::SecurityGroupIngress
+    Condition: IsStandard
     Properties: {GroupId: !Ref AlbSecurityGroupId, IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !Ref AurinaraConsumerVpcCidr}
   EdcPrivateLinkIngress:
     Type: AWS::EC2::SecurityGroupIngress
+    Condition: IsStandard
     Properties: {GroupId: !Ref AlbSecurityGroupId, IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !Ref EdcConsumerVpcCidr}
   PrivateLinkTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: IsStandard
     DependsOn: Listener
     Properties:
       VpcId: !Ref VpcId
@@ -157,6 +164,7 @@ Resources:
       HealthCheckPath: /health/live
   PrivateLinkListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: IsStandard
     Properties:
       LoadBalancerArn: !Ref PrivateLinkLoadBalancer
       Port: 80
@@ -164,6 +172,7 @@ Resources:
       DefaultActions: [{Type: forward, TargetGroupArn: !Ref PrivateLinkTargetGroup}]
   EndpointService:
     Type: AWS::EC2::VPCEndpointService
+    Condition: IsStandard
     Properties:
       AcceptanceRequired: false
       NetworkLoadBalancerArns: [!Ref PrivateLinkLoadBalancer]
@@ -171,6 +180,7 @@ Resources:
       SupportedIpAddressTypes: [ipv4]
   EndpointServicePermissions:
     Type: AWS::EC2::VPCEndpointServicePermissions
+    Condition: IsStandard
     Properties:
       ServiceId: !Ref EndpointService
       AllowedPrincipals: [!Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root']
@@ -179,8 +189,8 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub aurinara-platform-${Environment}-api
-      Cpu: '1024'
-      Memory: '2048'
+      Cpu: !If [IsBudget, '512', '1024']
+      Memory: !If [IsBudget, '1024', '2048']
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
@@ -190,7 +200,10 @@ Resources:
       ContainerDefinitions:
         - Name: api
           Image: !Ref ApplicationImage
-          Command: [python, scripts/aws_entrypoint.py, uvicorn, 'aurinara_platform.main:app', --host, 0.0.0.0, --port, '8000', --workers, '2']
+          Command: !If
+            - IsBudget
+            - [python, scripts/aws_entrypoint.py, uvicorn, 'aurinara_platform.main:app', --host, 0.0.0.0, --port, '8000', --workers, '1']
+            - [python, scripts/aws_entrypoint.py, uvicorn, 'aurinara_platform.main:app', --host, 0.0.0.0, --port, '8000', --workers, '2']
           Essential: true
           PortMappings: [{ContainerPort: 8000, Protocol: tcp}]
           ReadonlyRootFilesystem: true
@@ -238,7 +251,7 @@ Resources:
       ServiceName: api
       Cluster: !Ref Cluster
       TaskDefinition: !Ref ApiTaskDefinition
-      DesiredCount: !If [ServicesActive, 2, 0]
+      DesiredCount: !If [ServicesActive, !If [IsBudget, 1, 2], 0]
       LaunchType: FARGATE
       HealthCheckGracePeriodSeconds: 60
       DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 50, MaximumPercent: 200}
@@ -249,8 +262,8 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub aurinara-platform-${Environment}-publisher
-      Cpu: '512'
-      Memory: '1024'
+      Cpu: !If [IsBudget, '256', '512']
+      Memory: !If [IsBudget, '512', '1024']
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
@@ -271,7 +284,7 @@ Resources:
       ServiceName: outbox-publisher
       Cluster: !Ref Cluster
       TaskDefinition: !Ref PublisherTaskDefinition
-      DesiredCount: !If [ServicesActive, !If [IsProduction, 2, 1], 0]
+      DesiredCount: !If [ServicesActive, !If [IsBudget, 1, !If [IsProduction, 2, 1]], 0]
       LaunchType: FARGATE
       DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 50, MaximumPercent: 200}
       NetworkConfiguration: {AwsvpcConfiguration: {AssignPublicIp: DISABLED, SecurityGroups: [!Ref WorkerSecurityGroupId], Subnets: !Ref AppSubnetIds}}
@@ -279,8 +292,8 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub aurinara-platform-${Environment}-identity-registration
-      Cpu: '512'
-      Memory: '1024'
+      Cpu: !If [IsBudget, '256', '512']
+      Memory: !If [IsBudget, '512', '1024']
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
@@ -341,6 +354,7 @@ Resources:
 
   ApiScalableTarget:
     Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: IsStandard
     Properties:
       MinCapacity: !If [ServicesActive, 2, 0]
       MaxCapacity: 10
@@ -350,6 +364,7 @@ Resources:
       ServiceNamespace: ecs
   ApiScaling:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: IsStandard
     Properties:
       PolicyName: api-cpu
       PolicyType: TargetTrackingScaling
@@ -366,6 +381,8 @@ Outputs:
   AlbDnsName: {Value: !GetAtt InternalLoadBalancer.DNSName}
   AlbFullName: {Value: !GetAtt InternalLoadBalancer.LoadBalancerFullName}
   ApiTargetGroupFullName: {Value: !GetAtt ApiTargetGroup.TargetGroupFullName}
-  PrivateLinkServiceId: {Value: !Ref EndpointService}
-  PrivateLinkServiceName: {Value: !Sub 'com.amazonaws.vpce.${AWS::Region}.${EndpointService}'}
-  PrivateLinkNlbDnsName: {Value: !GetAtt PrivateLinkLoadBalancer.DNSName}
+  ListenerArn: {Value: !Ref Listener}
+  AlbSecurityGroupId: {Value: !Ref AlbSecurityGroupId}
+  PrivateLinkServiceId: {Condition: IsStandard, Value: !Ref EndpointService}
+  PrivateLinkServiceName: {Condition: IsStandard, Value: !Sub 'com.amazonaws.vpce.${AWS::Region}.${EndpointService}'}
+  PrivateLinkNlbDnsName: {Condition: IsStandard, Value: !GetAtt PrivateLinkLoadBalancer.DNSName}

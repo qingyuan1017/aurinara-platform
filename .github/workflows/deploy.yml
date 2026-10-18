@@ -2,6 +2,12 @@ name: Deploy AWS
 on:
   push: {branches: [main]}
   workflow_dispatch:
+    inputs:
+      deploy_staging:
+        description: Deploy the temporary staging environment before production
+        required: false
+        default: false
+        type: boolean
 permissions: {contents: read, id-token: write}
 env: {AWS_REGION: us-east-1}
 jobs:
@@ -24,6 +30,7 @@ jobs:
         with: {image-ref: '${{ steps.digest.outputs.image }}', severity: 'CRITICAL,HIGH', exit-code: '1', ignore-unfixed: true}
   staging:
     needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_staging }}
     runs-on: ubuntu-latest
     environment: staging
     concurrency:
@@ -54,15 +61,16 @@ jobs:
           EDC_CONSUMER_VPC_CIDR: 10.30.0.0/16
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           CLOUDFORMATION_EXECUTION_ROLE_ARN: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-cloudformation-execution' }}
+          DEPLOYMENT_PROFILE: ${{ vars.DEPLOYMENT_PROFILE || 'budget' }}
         run: |
           bash scripts/aws-package-nested-templates.sh infra/cloudformation/environment.yaml "${{ vars.TEMPLATE_BUCKET_NAME || 'aurinara-platform-bootstrap-templatebucket-iynthwph0ib0' }}" "templates/${GITHUB_SHA}" packaged.yaml
-          bash scripts/aws-deploy-environment.sh aurinara-platform-staging staging 10.20.0.0/16 db.t4g.medium
+          bash scripts/aws-deploy-environment.sh aurinara-platform-staging staging 10.20.0.0/16 db.t4g.small
       - name: Configure Cloudflare DNS-only CNAME
         if: ${{ vars.DNS_PROVIDER != 'route53' }}
-        env: {CLOUDFLARE_API_TOKEN: '${{ secrets.CLOUDFLARE_API_TOKEN }}', CLOUDFLARE_ZONE_ID: '${{ vars.CLOUDFLARE_ZONE_ID }}'}
+        env: {CLOUDFLARE_API_TOKEN: '${{ secrets.CLOUDFLARE_API_TOKEN }}', CLOUDFLARE_ZONE_ID: '${{ vars.CLOUDFLARE_ZONE_ID }}', DEPLOYMENT_PROFILE: "${{ vars.DEPLOYMENT_PROFILE || 'budget' }}"}
         run: |
           bash scripts/cloudflare-upsert-dns.sh aurinara-platform-staging
-          bash scripts/cloudflare-verify-privatelink.sh aurinara-platform-staging
+          if [[ "$DEPLOYMENT_PROFILE" != budget ]]; then bash scripts/cloudflare-verify-privatelink.sh aurinara-platform-staging; fi
       - name: Load identity outputs
         run: |
           output() { aws cloudformation describe-stacks --stack-name aurinara-platform-staging --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
@@ -93,6 +101,7 @@ jobs:
           curl --fail --retry 12 --retry-delay 10 "https://platform-staging.${{ vars.BASE_DOMAIN || 'aurinara.com' }}/health/live"
   production:
     needs: [build, staging]
+    if: ${{ always() && needs.build.result == 'success' && (needs.staging.result == 'success' || needs.staging.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: production
     concurrency:
@@ -127,16 +136,17 @@ jobs:
           EDC_CONSUMER_VPC_CIDR: 10.70.0.0/16
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           CLOUDFORMATION_EXECUTION_ROLE_ARN: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE_ARN || 'arn:aws:iam::730335504220:role/aurinara-platform-cloudformation-execution' }}
+          DEPLOYMENT_PROFILE: ${{ vars.DEPLOYMENT_PROFILE || 'budget' }}
         run: |
           bash scripts/aws-package-nested-templates.sh infra/cloudformation/environment.yaml "${{ vars.TEMPLATE_BUCKET_NAME || 'aurinara-platform-bootstrap-templatebucket-iynthwph0ib0' }}" "templates/${GITHUB_SHA}" packaged.yaml
-          bash scripts/aws-deploy-environment.sh aurinara-platform-production production 10.50.0.0/16 db.m7g.large
+          bash scripts/aws-deploy-environment.sh aurinara-platform-production production 10.50.0.0/16 db.t4g.small
           aws cloudformation update-termination-protection --enable-termination-protection --stack-name aurinara-platform-production
       - name: Configure Cloudflare DNS-only CNAME
         if: ${{ vars.DNS_PROVIDER != 'route53' }}
-        env: {CLOUDFLARE_API_TOKEN: '${{ secrets.CLOUDFLARE_API_TOKEN }}', CLOUDFLARE_ZONE_ID: '${{ vars.CLOUDFLARE_ZONE_ID }}'}
+        env: {CLOUDFLARE_API_TOKEN: '${{ secrets.CLOUDFLARE_API_TOKEN }}', CLOUDFLARE_ZONE_ID: '${{ vars.CLOUDFLARE_ZONE_ID }}', DEPLOYMENT_PROFILE: "${{ vars.DEPLOYMENT_PROFILE || 'budget' }}"}
         run: |
           bash scripts/cloudflare-upsert-dns.sh aurinara-platform-production
-          bash scripts/cloudflare-verify-privatelink.sh aurinara-platform-production
+          if [[ "$DEPLOYMENT_PROFILE" != budget ]]; then bash scripts/cloudflare-verify-privatelink.sh aurinara-platform-production; fi
       - name: Load identity outputs
         run: |
           output() { aws cloudformation describe-stacks --stack-name aurinara-platform-production --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }

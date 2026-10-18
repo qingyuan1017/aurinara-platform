@@ -5,6 +5,7 @@ stack_name=${1:?missing stack name}
 environment=${2:?missing environment}
 vpc_cidr=${3:?missing VPC CIDR}
 database_class=${4:?missing database class}
+deployment_profile=${DEPLOYMENT_PROFILE:-standard}
 dns_provider=${DNS_PROVIDER:-cloudflare}
 hosted_zone_id=${HOSTED_ZONE_ID:-}
 ses_source_arn=${SES_SOURCE_ARN:-}
@@ -28,6 +29,7 @@ for name in "${required[@]}"; do [[ -n "${!name:-}" ]] || { echo "$name is requi
     exit 1
   }
 [[ "$dns_provider" == cloudflare || "$dns_provider" == route53 ]] || { echo "DNS_PROVIDER must be cloudflare or route53" >&2; exit 1; }
+[[ "$deployment_profile" == standard || "$deployment_profile" == budget ]] || { echo "DEPLOYMENT_PROFILE must be standard or budget" >&2; exit 1; }
 [[ "$dns_provider" != route53 || -n "$hosted_zone_id" ]] || { echo "HOSTED_ZONE_ID is required for Route 53" >&2; exit 1; }
 
 deploy() {
@@ -40,8 +42,9 @@ deploy() {
     --role-arn "$CLOUDFORMATION_EXECUTION_ROLE_ARN" \
     --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
     --no-fail-on-empty-changeset \
+    --tags aurinara:suite=aurinara aurinara:environment="$environment" aurinara:profile="$deployment_profile" \
     --parameter-overrides \
-      Environment="$environment" VpcCidr="$vpc_cidr" BaseDomain="$BASE_DOMAIN" \
+      Environment="$environment" DeploymentProfile="$deployment_profile" VpcCidr="$vpc_cidr" BaseDomain="$BASE_DOMAIN" \
       DnsProvider="$dns_provider" HostedZoneId="$hosted_zone_id" CertificateArn="$CERTIFICATE_ARN" \
       CognitoDomainPrefix="$COGNITO_DOMAIN_PREFIX" SesSourceArn="$ses_source_arn" CognitoFromAddress="$cognito_from_address" \
       ApplicationImage="$service_image" MigrationApplicationImage="$migration_image" DatabaseInstanceClass="$database_class" \

@@ -2,13 +2,21 @@
 
 `aurinara-platform` owns the shared AWS foundation for the three products. Each
 environment stack creates the shared Cognito user pool and product clients, the
-Platform event bus, the Platform public edge, and the Platform PrivateLink
-service. Aurinara and Aurinara EDC consume the published stack outputs; they do
+Platform event bus, and the Platform public edge. The `standard` profile also
+creates the Platform PrivateLink service. Aurinara and Aurinara EDC consume the published stack outputs; they do
 not create independent identity providers or publish directly into product
 databases.
 
+The production workflow uses the supported `budget` profile. It shares the
+Platform ALB and WAF across all three CloudFront distributions, uses one NAT
+gateway, retains separate Single-AZ databases, and schedules retry-safe consumer
+workers rather than keeping them continuously running. Staging is opt-in from
+`workflow_dispatch`. See [Budget AWS deployment profile](budget-deployment-profile.md)
+for topology, cost assumptions, cutover order, and rollback.
+
 Platform also owns the suite CloudTrail resources. The production trail records
-management events and S3 object data events for every bucket in the account;
+management events and S3 object data events for suite buckets whose names start
+with `aurinara-`;
 the staging trail retains Platform-staging object coverage. Consumer stacks do
 not create trails, avoiding the non-adjustable five-trails-per-region limit.
 
@@ -24,7 +32,7 @@ not create trails, avoiding the non-adjustable five-trails-per-region limit.
 - Optional private malware-scanner HTTPS endpoint and a Secrets Manager secret
   holding its bearer token. Configure both values together. When omitted,
   uploaded objects are accepted without malware inspection in that environment.
-- An optional private DNS override for the endpoint service. It defaults to
+- For `standard`, an optional private DNS override for the endpoint service. It defaults to
   `platform.internal.<base-domain>`. Cloudflare must host the generated
   PrivateLink verification TXT record.
 - GitHub `staging` and `production` environments; production should require
@@ -81,14 +89,15 @@ variable.
 ## Release flow
 
 Merges to `main` build one immutable image, generate an SBOM, scan the image,
-and deploy its digest to staging. The workflow creates infrastructure with ECS
-services at zero, runs Alembic as a one-off task, activates API and publisher
+and deploy its digest to production after approval. A manual run with
+`deploy_staging=true` deploys staging first. The workflow creates infrastructure
+with ECS services at zero, runs Alembic as a one-off task, activates API and publisher
 services, reconciles the public Cloudflare CNAME, publishes the SPA, and runs a
-health check. Production repeats the exact digest after GitHub Environment
-approval and takes an RDS snapshot first.
+health check. Production takes an RDS snapshot before the update.
 
-The workflow also publishes the PrivateLink ownership TXT record and waits for
-AWS verification. Verify this before starting consumer deployments:
+In the `standard` profile the workflow also publishes the PrivateLink ownership
+TXT record and waits for AWS verification. Verify this before starting standard
+consumer deployments:
 
 ```bash
 aws ec2 describe-vpc-endpoint-service-configurations \
@@ -96,12 +105,15 @@ aws ec2 describe-vpc-endpoint-service-configurations \
   --query 'ServiceConfigurations[0].PrivateDnsNameConfiguration'
 ```
 
-The state must be `verified`. The Platform stack outputs are the authoritative
+The state must be `verified`. Budget consumers instead use the shared internal
+ALB URL and listener outputs and do not create PrivateLink endpoints. The
+Platform stack outputs are the authoritative
 inputs for consumers: `VpcId`, `VpcCidr`, the application/runner/data subnet
-IDs, `PlatformPrivateLinkServiceName`, `PlatformPrivateUrl`, `EventBusName`, the
+IDs, `PlatformPrivateUrl`, the shared ALB/WAF/VPC-origin values, `EventBusName`, the
 shared identity key ARN, user-pool/client IDs, token and issuer URLs, and the two
 product service-client secret ARNs. Consumers create their own security groups
 and data services inside the matching Platform environment's network.
+`PlatformPrivateLinkServiceName` is additionally present in `standard`.
 
 Browser clients use the Cognito ID token as their API bearer because it carries
 the public SPA-client audience and user identity. Cognito access tokens are not
@@ -154,15 +166,19 @@ For each environment, deploy and verify in this order:
 2. `aurinara-<environment>`.
 3. `aurinara-edc-<environment>`.
 
-Do not deploy a consumer until Platform health, Cognito login, PrivateLink
-private DNS, and EventBridge publication have been verified. Consumer deploy
+Do not deploy a consumer until Platform health, Cognito login, EventBridge
+publication, and the selected private path have been verified. For `standard`,
+verify PrivateLink private DNS; for `budget`, verify the shared ALB and VPC-origin
+outputs. Consumer deploy
 scripts query the matching Platform stack directly, preventing copied output
 values from drifting.
 
 ## Recovery and operations
 
-Production uses Multi-AZ PostgreSQL, 35-day automated backups, deletion
-protection, retained KMS/S3 resources, S3 versioning/Object Lock, and AWS Backup.
+Standard production uses Multi-AZ PostgreSQL and 35-day automated backups.
+Budget production uses separate Single-AZ databases and 14-day automated
+backups. Both profiles keep deletion protection, retained KMS/S3 resources, S3
+versioning/Object Lock, and AWS Backup.
 Restore tests remain operator-led: perform and record an RDS point-in-time
 restore and S3 restore before launch and quarterly. Application rollback uses
 the previous image digest; database migrations use expand/contract and forward

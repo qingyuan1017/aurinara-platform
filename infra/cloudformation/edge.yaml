@@ -188,3 +188,4 @@ Outputs:
   DistributionId: {Value: !Ref Distribution}
   DistributionDomainName: {Value: !GetAtt Distribution.DomainName}
   WebAclArn: {Value: !GetAtt WebAcl.Arn}
+  VpcOriginId: {Value: !GetAtt ApiVpcOrigin.Id}

@@ -3,6 +3,7 @@ Description: Aurinara Platform encrypted audit trail, alarms, dashboard, and bud
 
 Parameters:
   Environment: {Type: String, AllowedValues: [staging, production]}
+  DeploymentProfile: {Type: String, AllowedValues: [standard, budget], Default: standard}
   AlarmEmail: {Type: String, Default: ''}
   ClusterName: {Type: String}
   ApiServiceName: {Type: String}
@@ -17,6 +18,7 @@ Parameters:
 Conditions:
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
   IsProduction: !Equals [!Ref Environment, production]
+  IsBudget: !Equals [!Ref DeploymentProfile, budget]
 
 Resources:
   AlarmTopic:
@@ -126,7 +128,7 @@ Resources:
             - Type: AWS::S3::Object
               Values: !If
                 - IsProduction
-                - [!Sub 'arn:${AWS::Partition}:s3:::']
+                - [!Sub 'arn:${AWS::Partition}:s3:::aurinara-']
                 - [!Sub 'arn:${AWS::Partition}:s3:::${ObjectBucketName}/']
   AuditLogPolicy:
     Type: AWS::S3::BucketPolicy
@@ -148,11 +150,18 @@ Resources:
             Condition: {StringEquals: {'s3:x-amz-acl': bucket-owner-full-control}}
   MonthlyBudget:
     Type: AWS::Budgets::Budget
+    Condition: IsProduction
     Properties:
-      Budget: {BudgetName: !Sub 'aurinara-platform-${Environment}', BudgetType: COST, TimeUnit: MONTHLY, BudgetLimit: {Amount: 1000, Unit: USD}}
+      Budget: {BudgetName: !Sub 'aurinara-suite-${Environment}', BudgetType: COST, TimeUnit: MONTHLY, BudgetLimit: {Amount: !If [IsBudget, 300, 1000], Unit: USD}}
       NotificationsWithSubscribers: !If
         - HasAlarmEmail
-        - - Notification: {NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE}
+        - - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 67, ThresholdType: PERCENTAGE}
+            Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlarmEmail}]
+          - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 84, ThresholdType: PERCENTAGE}
+            Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlarmEmail}]
+          - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE}
+            Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlarmEmail}]
+          - Notification: {NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE}
             Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlarmEmail}]
         - !Ref AWS::NoValue
 
