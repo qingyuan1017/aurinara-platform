@@ -1,6 +1,7 @@
 const TOKEN_KEY = 'aurinara.platform.access_token'
 const STATE_KEY = 'aurinara.platform.oidc_state'
 const VERIFIER_KEY = 'aurinara.platform.pkce_verifier'
+const RETURN_TO_KEY = 'aurinara.platform.return_to'
 
 export interface IdentityClaims {
   sub: string
@@ -44,6 +45,13 @@ export function setToken(token: string): void {
   sessionStorage.setItem(TOKEN_KEY, token)
 }
 
+/** Allow only an in-app destination after the identity-provider round trip. */
+export function sanitizeReturnTo(returnTo: string | null | undefined): string {
+  if (!returnTo || !returnTo.startsWith('/') || returnTo.startsWith('//')) return '/'
+  if (returnTo.startsWith('/auth/callback')) return '/'
+  return returnTo
+}
+
 export function isOidcConfigured(): boolean {
   const oidc = config()
   return Boolean(oidc.authorizeUrl && oidc.tokenUrl && oidc.clientId && oidc.redirectUri)
@@ -64,7 +72,9 @@ export function claims(): IdentityClaims | null {
   }
 }
 
-export async function startLogin(): Promise<void> {
+export async function startLogin(
+  returnTo = `${location.pathname}${location.search}${location.hash}`,
+): Promise<void> {
   const oidc = config()
   if (!oidc.authorizeUrl || !oidc.clientId || !oidc.redirectUri) {
     throw new Error('OIDC is not configured for this console')
@@ -74,6 +84,7 @@ export async function startLogin(): Promise<void> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
   sessionStorage.setItem(STATE_KEY, state)
   sessionStorage.setItem(VERIFIER_KEY, verifier)
+  sessionStorage.setItem(RETURN_TO_KEY, sanitizeReturnTo(returnTo))
   const query = new URLSearchParams({
     response_type: 'code', client_id: oidc.clientId, redirect_uri: oidc.redirectUri,
     scope: oidc.scopes, state, code_challenge: encode(new Uint8Array(digest)),
@@ -82,14 +93,16 @@ export async function startLogin(): Promise<void> {
   window.location.assign(`${oidc.authorizeUrl}?${query}`)
 }
 
-export async function completeLogin(search: string): Promise<void> {
+export async function completeLogin(search: string): Promise<string> {
   const query = new URLSearchParams(search)
   const state = query.get('state')
   const code = query.get('code')
   const verifier = sessionStorage.getItem(VERIFIER_KEY)
   const expected = sessionStorage.getItem(STATE_KEY)
+  const returnTo = sessionStorage.getItem(RETURN_TO_KEY)
   sessionStorage.removeItem(STATE_KEY)
   sessionStorage.removeItem(VERIFIER_KEY)
+  sessionStorage.removeItem(RETURN_TO_KEY)
   if (!code || !state || state !== expected || !verifier) throw new Error('OIDC callback validation failed')
   const oidc = config()
   if (!oidc.tokenUrl || !oidc.clientId || !oidc.redirectUri) throw new Error('OIDC token exchange is not configured')
@@ -99,7 +112,8 @@ export async function completeLogin(search: string): Promise<void> {
       redirect_uri: oidc.redirectUri, code, code_verifier: verifier }),
   })
   if (!response.ok) throw new Error('OIDC token exchange failed')
-  const payload = (await response.json()) as { access_token?: string }
-  if (!payload.access_token) throw new Error('OIDC response did not contain an access token')
-  setToken(payload.access_token)
+  const payload = (await response.json()) as { id_token?: string }
+  if (!payload.id_token) throw new Error('OIDC response did not contain an ID token')
+  setToken(payload.id_token)
+  return sanitizeReturnTo(returnTo)
 }

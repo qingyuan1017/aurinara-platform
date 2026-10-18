@@ -103,6 +103,12 @@ shared identity key ARN, user-pool/client IDs, token and issuer URLs, and the tw
 product service-client secret ARNs. Consumers create their own security groups
 and data services inside the matching Platform environment's network.
 
+Browser clients use the Cognito ID token as their API bearer because it carries
+the public SPA-client audience and user identity. Cognito access tokens are not
+interchangeable: Platform reserves their `client_id` validation path for
+registered service clients. The console stores only a same-origin return path
+with the PKCE transaction and restores it after a successful callback.
+
 ## Deployment order
 
 For each environment, deploy and verify in this order:

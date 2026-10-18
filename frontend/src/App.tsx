@@ -59,8 +59,10 @@ export function App() {
     const initialize = async () => {
       try {
         if (location.pathname === '/auth/callback') {
-          await completeLogin(location.search)
-          history.replaceState({}, '', '/')
+          const returnTo = await completeLogin(location.search)
+          history.replaceState({}, '', returnTo)
+          const restoredPage = location.hash.slice(1) as Page
+          setPage(nav.some((item) => item.id === restoredPage) ? restoredPage : 'overview')
         }
         if (!getToken()) await restoreCognitoSession()
         if (getToken()) await load()
