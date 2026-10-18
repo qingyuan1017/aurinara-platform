@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api } from './api'
+import { api, joinApiUrl } from './api'
 
 describe('platform API client', () => {
   afterEach(() => vi.unstubAllGlobals())
+
+  it('does not duplicate a version prefix already present in the API base', () => {
+    expect(joinApiUrl('/v1', '/v1/me')).toBe('/v1/me')
+    expect(joinApiUrl('https://platform.example/v1/', '/v1/studies')).toBe(
+      'https://platform.example/v1/studies',
+    )
+    expect(joinApiUrl('https://platform.example', '/v1/me')).toBe(
+      'https://platform.example/v1/me',
+    )
+  })
 
   const prepareBrowserGlobals = () => {
     vi.stubGlobal('sessionStorage', { getItem: () => null })

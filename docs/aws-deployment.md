@@ -109,6 +109,27 @@ interchangeable: Platform reserves their `client_id` validation path for
 registered service clients. The console stores only a same-origin return path
 with the PKCE transaction and restores it after a successful callback.
 
+### Initial administrator
+
+Production never grants access merely because an identity is the first person
+to sign in. After the selected administrator has a confirmed Cognito account,
+an operator runs the explicit bootstrap command inside the deployed migration
+task boundary:
+
+```bash
+python scripts/bootstrap_initial_admin.py \
+  --subject <immutable-cognito-subject> \
+  --email <verified-email> \
+  --display-name <reviewed-display-name> \
+  --confirm-production
+```
+
+The command is idempotent, refuses to register a different second human as the
+"initial" administrator, assigns the reviewed Platform Administrator and EDC
+System Administrator roles, and publishes the normal Platform assignment event
+for the EDC projection. Do not use email as the identity key; verify the exact
+Cognito `sub` before running the command.
+
 ## Deployment order
 
 For each environment, deploy and verify in this order:

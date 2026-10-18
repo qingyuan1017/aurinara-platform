@@ -3,6 +3,15 @@ import type { Decision, Membership, Permission, ProblemPayload, RepositoryNode, 
 
 const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
+export function joinApiUrl(baseUrl: string, path: string): string {
+  const normalizedBase = baseUrl.replace(/\/$/, '')
+  if (!normalizedBase) return path
+  if (normalizedBase.endsWith('/v1') && path.startsWith('/v1/')) {
+    return `${normalizedBase}${path.slice('/v1'.length)}`
+  }
+  return `${normalizedBase}${path}`
+}
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public requestId?: string, public details?: unknown) {
     super(message)
@@ -11,7 +20,7 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken()
-  const response = await fetch(`${base}${path}`, {
+  const response = await fetch(joinApiUrl(base, path), {
     ...init,
     headers: {
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
