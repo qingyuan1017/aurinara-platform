@@ -71,6 +71,8 @@ def _register(
             "artifact.object.upload",
             "artifact.object.download",
             "artifact.object.reference",
+            "artifact.permission.sync",
+            "artifact.role.sync",
         ),
         "aurinara-edc": ("edc.file.upload",),
     }
@@ -131,12 +133,15 @@ def main() -> None:
             client_id=args.aurinara_client_id,
             product="aurinara",
         )
-        changed = _register(
-            session,
-            issuer=settings.oidc_issuer,
-            client_id=args.edc_client_id,
-            product="aurinara-edc",
-        ) or changed
+        changed = (
+            _register(
+                session,
+                issuer=settings.oidc_issuer,
+                client_id=args.edc_client_id,
+                product="aurinara-edc",
+            )
+            or changed
+        )
         policy = session.get(PolicyState, 1)
         if policy is None:
             raise RuntimeError("Platform policy state is not initialized")

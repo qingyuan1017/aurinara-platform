@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from aurinara_platform.default_access import REGISTERED_STUDY_CREATOR_ROLE_ID
 from aurinara_platform.identity_registration import (
     ConfirmedIdentityEvent,
     backfill_confirmed_identities,
@@ -25,7 +26,7 @@ def _event() -> ConfirmedIdentityEvent:
     )
 
 
-def test_confirmed_identity_is_created_once_with_no_access(session: Session) -> None:
+def test_confirmed_identity_is_created_once_with_create_only_access(session: Session) -> None:
     session.add(PolicyState(id=1, version=7))
     session.commit()
 
@@ -42,12 +43,17 @@ def test_confirmed_identity_is_created_once_with_no_access(session: Session) -> 
     assert second_created is False
     assert second.id == first.id
     assert session.scalar(select(func.count()).select_from(User)) == 1
-    assert session.scalar(select(func.count()).select_from(RoleAssignment)) == 0
-    assert session.get(PolicyState, 1).version == 7
-    event = session.scalar(select(OutboxEvent))
-    assert event is not None
-    assert event.event_type == "platform.user.created.v1"
-    assert event.payload["subject"] == "immutable-cognito-subject"
+    assignment = session.scalar(select(RoleAssignment))
+    assert assignment is not None
+    assert assignment.role_id == REGISTERED_STUDY_CREATOR_ROLE_ID
+    assert assignment.study_id is None
+    assert session.get(PolicyState, 1).version == 8
+    events = list(session.scalars(select(OutboxEvent).order_by(OutboxEvent.occurred_at)))
+    assert [event.event_type for event in events] == [
+        "platform.user.created.v1",
+        "platform.assignment.changed.v1",
+    ]
+    assert events[0].payload["subject"] == "immutable-cognito-subject"
 
 
 class FakeSqs:
@@ -67,13 +73,16 @@ def test_worker_acknowledges_only_after_commit(session_factory) -> None:
         session.add(PolicyState(id=1, version=1))
     client = FakeSqs(_event().model_dump_json())
 
-    assert process_registration_messages(
-        session_factory,
-        client,
-        queue_url="https://sqs.example/registration",
-        expected_issuer="https://issuer.example",
-        wait_time_seconds=0,
-    ) == 1
+    assert (
+        process_registration_messages(
+            session_factory,
+            client,
+            queue_url="https://sqs.example/registration",
+            expected_issuer="https://issuer.example",
+            wait_time_seconds=0,
+        )
+        == 1
+    )
     assert client.deleted == [
         {"QueueUrl": "https://sqs.example/registration", "ReceiptHandle": "receipt-1"}
     ]
@@ -82,13 +91,16 @@ def test_worker_acknowledges_only_after_commit(session_factory) -> None:
 def test_worker_leaves_invalid_messages_for_bounded_redrive(session_factory) -> None:
     client = FakeSqs(json.dumps({"schema_version": "1.0.0", "email": "missing-identity"}))
 
-    assert process_registration_messages(
-        session_factory,
-        client,
-        queue_url="https://sqs.example/registration",
-        expected_issuer="https://issuer.example",
-        wait_time_seconds=0,
-    ) == 0
+    assert (
+        process_registration_messages(
+            session_factory,
+            client,
+            queue_url="https://sqs.example/registration",
+            expected_issuer="https://issuer.example",
+            wait_time_seconds=0,
+        )
+        == 0
+    )
     assert client.deleted == []
 
 
@@ -156,4 +168,6 @@ def test_backfill_imports_only_confirmed_enabled_users(session_factory) -> None:
     with session_factory() as session:
         users = list(session.scalars(select(User)))
         assert [item.subject for item in users] == ["confirmed-subject"]
-        assert session.scalar(select(func.count()).select_from(RoleAssignment)) == 0
+        assignment = session.scalar(select(RoleAssignment))
+        assert assignment is not None
+        assert assignment.role_id == REGISTERED_STUDY_CREATOR_ROLE_ID

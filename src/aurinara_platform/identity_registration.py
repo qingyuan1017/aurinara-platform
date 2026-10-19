@@ -1,4 +1,4 @@
-"""Durable provisioning of confirmed Cognito identities with no access grants."""
+"""Durable provisioning of confirmed Cognito identities with create-only access."""
 
 from __future__ import annotations
 
@@ -12,7 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aurinara_platform.models import OutboxEvent, PolicyState, User, UserStatus
+from aurinara_platform.default_access import (
+    REGISTERED_STUDY_CREATOR_ROLE_ID,
+    ensure_platform_access_defaults,
+    ensure_registered_study_creator,
+)
+from aurinara_platform.models import OutboxEvent, PolicyState, User, UserStatus, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +56,7 @@ def provision_confirmed_identity(
     *,
     expected_issuer: str,
 ) -> tuple[User, bool]:
-    """Create a confirmed external identity once, without granting any role."""
+    """Create a confirmed identity and ensure its create-only baseline role."""
 
     if event.schema_version != "1.0.0":
         raise ValueError("unsupported confirmed identity event schema")
@@ -65,39 +70,64 @@ def provision_confirmed_identity(
     if state is None:
         raise RuntimeError("Platform policy state is not initialized")
 
+    defaults_changed = ensure_platform_access_defaults(session)
     user = session.scalar(
         select(User).where(User.issuer == event.issuer, User.subject == event.subject)
     )
-    if user is not None:
-        return user, False
-
-    user = User(
-        issuer=event.issuer,
-        subject=event.subject,
-        email=event.email,
-        display_name=event.display_name or event.email,
-        status=UserStatus.active,
-    )
-    session.add(user)
-    session.flush()
-    session.add(
-        OutboxEvent(
-            event_type="platform.user.created.v1",
-            aggregate_type="user",
-            aggregate_id=user.id,
-            sequence=1,
-            payload={
-                "user_id": str(user.id),
-                "issuer": user.issuer,
-                "subject": user.subject,
-                "email": user.email or "",
-                "display_name": user.display_name or "",
-                "status": user.status,
-            },
+    created = user is None
+    if user is None:
+        user = User(
+            issuer=event.issuer,
+            subject=event.subject,
+            email=event.email,
+            display_name=event.display_name or event.email,
+            status=UserStatus.active,
         )
-    )
+        session.add(user)
+        session.flush()
+        session.add(
+            OutboxEvent(
+                event_type="platform.user.created.v1",
+                aggregate_type="user",
+                aggregate_id=user.id,
+                sequence=1,
+                payload={
+                    "user_id": str(user.id),
+                    "issuer": user.issuer,
+                    "subject": user.subject,
+                    "email": user.email or "",
+                    "display_name": user.display_name or "",
+                    "status": user.status,
+                },
+            )
+        )
+
+    access_changed = False
+    if user.status == UserStatus.active:
+        access_changed = ensure_registered_study_creator(session, user)
+    if defaults_changed or access_changed:
+        state.version += 1
+        state.updated_at = utc_now()
+    if access_changed:
+        session.add(
+            OutboxEvent(
+                event_type="platform.assignment.changed.v1",
+                aggregate_type="user",
+                aggregate_id=user.id,
+                sequence=state.version,
+                payload={
+                    "user_id": str(user.id),
+                    "issuer": user.issuer,
+                    "subject": user.subject,
+                    "product": "platform",
+                    "role_ids": [str(REGISTERED_STUDY_CREATOR_ROLE_ID)],
+                    "assigned_by": str(user.id),
+                    "policy_version": state.version,
+                },
+            )
+        )
     session.flush()
-    return user, True
+    return user, created
 
 
 def process_registration_messages(

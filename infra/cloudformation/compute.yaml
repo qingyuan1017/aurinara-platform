@@ -343,7 +343,8 @@ Resources:
             - !Sub >-
                 alembic upgrade head && python scripts/bootstrap_service_accounts.py
                 --aurinara-client-id ${AurinaraServiceClientId}
-                --edc-client-id ${EdcServiceClientId} && python scripts/sync_cognito_users.py
+                --edc-client-id ${EdcServiceClientId} && python scripts/bootstrap_default_access.py
+                && python scripts/sync_cognito_users.py
                 --backfill --user-pool-id ${UserPoolId}
           Essential: true
           ReadonlyRootFilesystem: true

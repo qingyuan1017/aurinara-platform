@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from aurinara_platform.auth import Principal
 from aurinara_platform.config import Settings
+from aurinara_platform.default_access import PLATFORM_STUDY_OWNER_ROLE_ID, study_owner_roles
 from aurinara_platform.models import (
     ObjectReference,
     ObjectStatus,
@@ -384,6 +385,14 @@ class StudyService:
             product="platform",
             resource_type="study",
         )
+        try:
+            owner_roles = study_owner_roles(session)
+        except RuntimeError as error:
+            raise Problem(
+                503,
+                "study_access_not_ready",
+                "Study owner roles have not finished synchronizing",
+            ) from error
         study = Study(
             id=command.id or uuid4(),
             code=command.code,
@@ -398,6 +407,18 @@ class StudyService:
             raise Problem(
                 409, "study_conflict", "The study code or ID is already registered"
             ) from error
+        for roles in owner_roles.values():
+            session.add_all(
+                RoleAssignment(
+                    user_id=actor.id,
+                    role_id=role.id,
+                    study_id=study.id,
+                    assigned_by=actor.id,
+                )
+                for role in roles
+            )
+        policy_version = _bump_policy(session)
+        session.flush()
         _emit(
             session,
             "platform.study.created.v1",
@@ -413,19 +434,49 @@ class StudyService:
                 "created_by": str(study.created_by),
             },
         )
+        for product in ("aurinara", "aurinara-edc"):
+            _emit(
+                session,
+                "platform.membership.changed.v1",
+                "study",
+                study.id,
+                policy_version,
+                {
+                    "study_id": str(study.id),
+                    "user_id": str(actor.id),
+                    "product": product,
+                    "site_id": None,
+                    "role_ids": [str(role.id) for role in owner_roles[product]],
+                    "assigned_by": str(actor.id),
+                    "policy_version": policy_version,
+                },
+            )
         return study
 
     def visible(self, session: Session, user: User) -> list[Study]:
         statement = (
             select(Study)
-            .join(RoleAssignment, (RoleAssignment.study_id == Study.id))
-            .where(RoleAssignment.user_id == user.id)
+            .join(RoleAssignment, RoleAssignment.study_id == Study.id)
+            .join(RolePermission, RolePermission.role_id == RoleAssignment.role_id)
+            .join(Permission, Permission.code == RolePermission.permission_code)
+            .where(
+                RoleAssignment.user_id == user.id,
+                Permission.code == "platform.study.read",
+                Permission.status == "active",
+            )
             .distinct()
             .order_by(Study.code)
         )
         system_assignment = session.scalar(
-            select(RoleAssignment.id).where(
-                RoleAssignment.user_id == user.id, RoleAssignment.study_id.is_(None)
+            select(RoleAssignment.id)
+            .join(RolePermission, RolePermission.role_id == RoleAssignment.role_id)
+            .join(Permission, Permission.code == RolePermission.permission_code)
+            .where(
+                RoleAssignment.user_id == user.id,
+                RoleAssignment.study_id.is_(None),
+                RoleAssignment.site_id.is_(None),
+                Permission.code == "platform.study.read",
+                Permission.status == "active",
             )
         )
         if system_assignment is not None:
@@ -618,6 +669,12 @@ class MembershipService:
                 "Every role must be an active, assignable "
                 f"{expected_scope}-scope role for the selected product",
             )
+        if (
+            command.product == "platform"
+            and command.site_id is None
+            and PLATFORM_STUDY_OWNER_ROLE_ID not in role_ids
+        ):
+            self._require_another_study_owner(session, study_id, user_id)
         session.execute(
             delete(RoleAssignment).where(
                 RoleAssignment.user_id == user_id,
@@ -787,7 +844,10 @@ class MembershipService:
         command: ProductPermissionSync,
         principal: Principal,
     ) -> list[Permission]:
-        required_permission = {"aurinara-edc": "edc.permission.sync"}.get(product)
+        required_permission = {
+            "aurinara": "artifact.permission.sync",
+            "aurinara-edc": "edc.permission.sync",
+        }.get(product)
         if required_permission is None:
             raise Problem(422, "unsupported_product", "This product cannot register permissions")
         self._authorization.require(
@@ -829,13 +889,15 @@ class MembershipService:
             registered.append(permission)
 
         registered_codes = set(codes)
+        protected_permissions = {
+            "aurinara": {"artifact.permission.sync", "artifact.role.sync"},
+            "aurinara-edc": {"edc.permission.sync", "edc.role.sync", "edc.site.sync"},
+        }[product]
         retired = list(
             session.scalars(
                 select(Permission).where(
                     Permission.product == product,
-                    Permission.code.not_in(
-                        {"edc.permission.sync", "edc.role.sync", "edc.site.sync"}
-                    ),
+                    Permission.code.not_in(protected_permissions),
                     Permission.code.not_in(registered_codes),
                     Permission.status == "active",
                 )
@@ -930,6 +992,12 @@ class MembershipService:
         self._require_role_management(session, principal, role.product)
         if role.product == "platform":
             raise Problem(422, "platform_role_protected", "Platform roles are bootstrap-managed")
+        if role.source_role_id is not None:
+            raise Problem(
+                409,
+                "source_role_managed",
+                "This reviewed built-in role is synchronized by its owning product",
+            )
         if role.revision != expected_revision:
             raise Problem(
                 409,
@@ -1117,7 +1185,10 @@ class MembershipService:
         command: ProductRoleSync,
         principal: Principal,
     ) -> list[Role]:
-        permission = {"aurinara-edc": "edc.role.sync"}.get(product)
+        permission = {
+            "aurinara": "artifact.role.sync",
+            "aurinara-edc": "edc.role.sync",
+        }.get(product)
         if permission is None:
             raise Problem(422, "unsupported_product", "This product cannot register roles")
         self._authorization.require(
@@ -1127,11 +1198,128 @@ class MembershipService:
             product=product,
             resource_type="role_catalog",
         )
-        raise Problem(
-            409,
-            "role_catalog_platform_managed",
-            "Role composition is managed in Aurinara Platform; register permissions instead",
+        source_ids = [item.source_role_id for item in command.roles]
+        names = [item.name for item in command.roles]
+        if len(source_ids) != len(set(source_ids)) or len(names) != len(set(names)):
+            raise Problem(422, "duplicate_role", "Role IDs and names must be unique")
+
+        actor = session.scalar(
+            select(User).where(User.issuer == principal.issuer, User.subject == principal.subject)
         )
+        if actor is None:
+            raise Problem(403, "identity_not_registered", "The identity is not registered")
+        changed_roles: list[tuple[Role, list[str], dict[str, object] | None]] = []
+        synchronized: list[Role] = []
+        for definition in command.roles:
+            permission_codes = self._validate_role_permissions(
+                session,
+                product,
+                definition.scope_level,
+                definition.permissions,
+            )
+            role = session.scalar(
+                select(Role)
+                .options(selectinload(Role.permissions))
+                .where(
+                    Role.product == product,
+                    Role.source_role_id == definition.source_role_id,
+                )
+            )
+            if role is None:
+                collision = session.scalar(
+                    select(Role).where(
+                        Role.product == product,
+                        Role.name == definition.name,
+                    )
+                )
+                if collision is not None:
+                    raise Problem(
+                        409,
+                        "role_name_conflict",
+                        "A role with this name is already managed by another source",
+                    )
+                id_collision = session.get(Role, definition.source_role_id)
+                if id_collision is not None:
+                    raise Problem(
+                        409,
+                        "role_id_conflict",
+                        "The source role ID is already owned by another role",
+                    )
+                role = Role(
+                    id=definition.source_role_id,
+                    source_role_id=definition.source_role_id,
+                    product=product,
+                    name=definition.name,
+                    description=definition.description,
+                    scope_level=definition.scope_level,
+                    assignable=True,
+                    status="active",
+                )
+                session.add(role)
+                session.flush()
+                session.add_all(
+                    RolePermission(role_id=role.id, permission_code=code)
+                    for code in permission_codes
+                )
+                changed_roles.append((role, permission_codes, None))
+            else:
+                current_codes = role.permission_codes
+                previous = self._role_snapshot(role, current_codes)
+                if role.name != definition.name and session.scalar(
+                    select(Role.id).where(
+                        Role.product == product,
+                        Role.name == definition.name,
+                        Role.id != role.id,
+                    )
+                ):
+                    raise Problem(
+                        409,
+                        "role_name_conflict",
+                        "A role with this name is already managed by another source",
+                    )
+                expected = {
+                    "name": definition.name,
+                    "description": definition.description,
+                    "scope_level": definition.scope_level,
+                    "assignable": True,
+                    "status": "active",
+                }
+                changed = current_codes != permission_codes
+                for field, value in expected.items():
+                    if getattr(role, field) != value:
+                        setattr(role, field, value)
+                        changed = True
+                if changed:
+                    session.execute(delete(RolePermission).where(RolePermission.role_id == role.id))
+                    session.add_all(
+                        RolePermission(role_id=role.id, permission_code=code)
+                        for code in permission_codes
+                    )
+                    role.revision += 1
+                    role.updated_at = utc_now()
+                    changed_roles.append((role, permission_codes, previous))
+            synchronized.append(role)
+
+        if changed_roles:
+            version = _bump_policy(session)
+            session.flush()
+            for role, permission_codes, previous in changed_roles:
+                session.add(
+                    RoleChange(
+                        role_id=role.id,
+                        actor_id=actor.id,
+                        action="sync",
+                        reason="Synchronize reviewed product role catalog",
+                        previous_value=previous,
+                        new_value=self._role_snapshot(role, permission_codes),
+                        policy_version=version,
+                    )
+                )
+                self._emit_role_change(session, role, permission_codes, version)
+        session.flush()
+        for role in synchronized:
+            session.expire(role, ["permissions"])
+        return sorted(synchronized, key=lambda item: item.name)
 
     def remove(
         self,
@@ -1152,6 +1340,8 @@ class MembershipService:
             study_id=study_id,
             site_id=site_id,
         )
+        if product == "platform" and site_id is None:
+            self._require_another_study_owner(session, study_id, user_id)
         result = session.execute(
             delete(RoleAssignment).where(
                 RoleAssignment.user_id == user_id,
@@ -1178,6 +1368,34 @@ class MembershipService:
                 "policy_version": version,
             },
         )
+
+    @staticmethod
+    def _require_another_study_owner(session: Session, study_id: UUID, user_id: UUID) -> None:
+        target_is_owner = session.scalar(
+            select(RoleAssignment.id).where(
+                RoleAssignment.study_id == study_id,
+                RoleAssignment.site_id.is_(None),
+                RoleAssignment.user_id == user_id,
+                RoleAssignment.role_id == PLATFORM_STUDY_OWNER_ROLE_ID,
+            )
+        )
+        if target_is_owner is None:
+            return
+        owner_count = session.scalar(
+            select(func.count())
+            .select_from(RoleAssignment)
+            .where(
+                RoleAssignment.study_id == study_id,
+                RoleAssignment.site_id.is_(None),
+                RoleAssignment.role_id == PLATFORM_STUDY_OWNER_ROLE_ID,
+            )
+        )
+        if owner_count is not None and owner_count <= 1:
+            raise Problem(
+                409,
+                "last_study_owner",
+                "Assign another Platform Study Owner before removing the final owner",
+            )
 
     @staticmethod
     def list(session: Session, study_id: UUID) -> list[RoleAssignment]:

@@ -49,14 +49,17 @@ The AWS migration task runs the service-account bootstrap automatically with the
 Cognito client IDs created by the environment stack. The command above remains
 available for local development and is safe to rerun.
 
-Confirmed Cognito users are registered automatically in Platform with no roles or
-study/site assignments. Cognito's post-confirmation trigger writes a minimal,
+Confirmed Cognito users are registered automatically with one non-assignable,
+create-only Platform role and no study/site or product assignments. Cognito's
+post-confirmation trigger writes a minimal,
 KMS-encrypted SQS message, and the supervised `identity-registration` worker creates
 the idempotent Platform identity and normal user event. Every AWS migration task also
 reconciles all confirmed, enabled users already present in the environment's user pool,
 so users created before the trigger was installed are backfilled safely. Registration
-never grants product access; an administrator must still assign system roles in
-**Product access** and study/site roles in **Memberships**.
+does not expose existing studies or grant product-wide access. Creating a canonical
+study atomically assigns its creator the reviewed study-owner roles synchronized by
+Aurinara and EDC; other access remains managed through **Product access** and
+**Memberships**.
 
 After the first development administrator has signed in, grant that administrator
 the local product roles used to exercise the cross-product runtime:

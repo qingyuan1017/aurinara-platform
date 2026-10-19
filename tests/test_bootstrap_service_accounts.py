@@ -8,34 +8,28 @@ from scripts.bootstrap_service_accounts import _register
 def test_service_account_bootstrap_is_idempotent(session: Session) -> None:
     issuer = "https://issuer.example"
 
-    first_changes = (
-        _register(
-            session,
-            issuer=issuer,
-            client_id="aurinara-client",
-            product="aurinara",
-        )
-        | _register(
-            session,
-            issuer=issuer,
-            client_id="edc-client",
-            product="aurinara-edc",
-        )
+    first_changes = _register(
+        session,
+        issuer=issuer,
+        client_id="aurinara-client",
+        product="aurinara",
+    ) | _register(
+        session,
+        issuer=issuer,
+        client_id="edc-client",
+        product="aurinara-edc",
     )
     session.flush()
-    second_changes = (
-        _register(
-            session,
-            issuer=issuer,
-            client_id="aurinara-client",
-            product="aurinara",
-        )
-        | _register(
-            session,
-            issuer=issuer,
-            client_id="edc-client",
-            product="aurinara-edc",
-        )
+    second_changes = _register(
+        session,
+        issuer=issuer,
+        client_id="aurinara-client",
+        product="aurinara",
+    ) | _register(
+        session,
+        issuer=issuer,
+        client_id="edc-client",
+        product="aurinara-edc",
     )
     session.flush()
 
@@ -59,14 +53,14 @@ def test_service_account_bootstrap_is_idempotent(session: Session) -> None:
     }
     assert permission_products["platform.authorization.decide"] == "platform"
     assert permission_products["artifact.object.upload"] == "aurinara"
+    assert permission_products["artifact.permission.sync"] == "aurinara"
+    assert permission_products["artifact.role.sync"] == "aurinara"
     assert permission_products["edc.file.upload"] == "aurinara-edc"
 
     edc_role = next(role for role in roles if role.product == "aurinara-edc")
     edc_permissions = set(
         session.scalars(
-            select(RolePermission.permission_code).where(
-                RolePermission.role_id == edc_role.id
-            )
+            select(RolePermission.permission_code).where(RolePermission.role_id == edc_role.id)
         )
     )
     assert {
