@@ -71,9 +71,19 @@ python scripts/bootstrap_local_product_access.py
 This command is rejected outside `ENVIRONMENT=development`. Production assignments must
 continue to come from reviewed migration snapshots or explicit administrative actions.
 
-The API is under `/v1`; OpenAPI is at `/v1/openapi.json`. Configure a development OIDC
-issuer matching `.env.example`. Production refuses default object credentials or a disabled
-malware scanner.
+The API is under `/v1`; OpenAPI is at `/v1/openapi.json`. Local browser authentication uses
+the production user pool with separate localhost-only development app clients, so it follows
+the same authorization-code + PKCE flow as production without granting the development
+clients a production callback. After the production Platform stack exposes those clients,
+configure all three ignored local environments from its public outputs:
+
+```powershell
+python scripts/configure_local_managed_login.py --write
+```
+
+Run the command without `--write` to preview the files and keys it will update. It preserves
+unrelated dotenv values and does not read or print service-client secrets. Production refuses
+default object credentials or a disabled malware scanner.
 
 The local Compose stack exposes PostgreSQL on `55433`, MinIO on `9200` (console `9201`),
 and LocalStack EventBridge/SQS on `4567`. It creates the versioned
@@ -85,10 +95,10 @@ development.
 
 ## Administrative frontend
 
-The independent React console lives in `frontend/` and supports Cognito email/password
-authentication plus optional authorization-code + PKCE SSO. Cognito uses the public app
-client without a client secret and sends the ID token to the platform API. The console never
-receives service credentials, object-store credentials, or storage keys.
+The independent React console lives in `frontend/` and uses Cognito managed login with
+authorization code + PKCE. Cognito uses a public development app client without a client
+secret and sends the ID token to the platform API. The console never receives service
+credentials, object-store credentials, or storage keys.
 
 ```powershell
 cd frontend
@@ -98,9 +108,9 @@ npm run dev
 ```
 
 Vite serves the console at `http://localhost:5174` and proxies `/v1` and `/health` to the
-control plane at `http://localhost:8002`. Register
-`http://localhost:5174/auth/callback` as the development redirect URI. Use a separate API
-audience for the control plane and grant administrative permissions through reviewed roles.
+control plane at `http://localhost:8002`. The Platform development app client registers
+`http://localhost:5174/auth/callback` and uses its own audience. Grant administrative
+permissions through reviewed roles.
 
 For independent deployment, build `frontend/Dockerfile` with the `COGNITO_*` and optional
 `OIDC_*` public build arguments and the control-plane URL as `PUBLIC_API_URL`. The resulting

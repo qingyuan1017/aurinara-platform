@@ -207,6 +207,31 @@ Resources:
       CallbackURLs: [!Sub '${EdcApplicationUrl}/auth/cognito/callback']
       LogoutURLs: [!Sub '${EdcApplicationUrl}/login']
 
+  PlatformDevelopmentSpaClient:
+    Condition: IsProduction
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      <<: *SpaClient
+      ClientName: aurinara-platform-development-spa
+      CallbackURLs: ['http://localhost:5174/auth/callback']
+      LogoutURLs: ['http://localhost:5174/login']
+  AurinaraDevelopmentSpaClient:
+    Condition: IsProduction
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      <<: *SpaClient
+      ClientName: aurinara-development-spa
+      CallbackURLs: ['http://localhost:5173/auth/callback']
+      LogoutURLs: ['http://localhost:5173/login']
+  EdcDevelopmentSpaClient:
+    Condition: IsProduction
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      <<: *SpaClient
+      ClientName: aurinara-edc-development-spa
+      CallbackURLs: ['http://localhost:5173/auth/cognito/callback']
+      LogoutURLs: ['http://localhost:5173/login']
+
   PlatformBranding:
     Type: AWS::Cognito::ManagedLoginBranding
     DependsOn: UserPoolDomain
@@ -219,6 +244,21 @@ Resources:
     Type: AWS::Cognito::ManagedLoginBranding
     DependsOn: UserPoolDomain
     Properties: {UserPoolId: !Ref UserPool, ClientId: !Ref EdcSpaClient, UseCognitoProvidedValues: true}
+  PlatformDevelopmentBranding:
+    Condition: IsProduction
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: UserPoolDomain
+    Properties: {UserPoolId: !Ref UserPool, ClientId: !Ref PlatformDevelopmentSpaClient, UseCognitoProvidedValues: true}
+  AurinaraDevelopmentBranding:
+    Condition: IsProduction
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: UserPoolDomain
+    Properties: {UserPoolId: !Ref UserPool, ClientId: !Ref AurinaraDevelopmentSpaClient, UseCognitoProvidedValues: true}
+  EdcDevelopmentBranding:
+    Condition: IsProduction
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: UserPoolDomain
+    Properties: {UserPoolId: !Ref UserPool, ClientId: !Ref EdcDevelopmentSpaClient, UseCognitoProvidedValues: true}
 
   AurinaraServiceClient:
     Type: AWS::Cognito::UserPoolClient
@@ -263,6 +303,9 @@ Outputs:
   PlatformSpaClientId: {Value: !Ref PlatformSpaClient}
   AurinaraSpaClientId: {Value: !Ref AurinaraSpaClient}
   EdcSpaClientId: {Value: !Ref EdcSpaClient}
+  PlatformDevelopmentSpaClientId: {Condition: IsProduction, Value: !Ref PlatformDevelopmentSpaClient}
+  AurinaraDevelopmentSpaClientId: {Condition: IsProduction, Value: !Ref AurinaraDevelopmentSpaClient}
+  EdcDevelopmentSpaClientId: {Condition: IsProduction, Value: !Ref EdcDevelopmentSpaClient}
   AurinaraServiceClientId: {Value: !Ref AurinaraServiceClient}
   EdcServiceClientId: {Value: !Ref EdcServiceClient}
   AurinaraServiceClientSecretArn: {Value: !Ref AurinaraServiceSecret}

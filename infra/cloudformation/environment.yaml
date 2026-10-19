@@ -229,6 +229,9 @@ Outputs:
   PlatformSpaClientId: {Value: !GetAtt Identity.Outputs.PlatformSpaClientId}
   AurinaraSpaClientId: {Value: !GetAtt Identity.Outputs.AurinaraSpaClientId}
   EdcSpaClientId: {Value: !GetAtt Identity.Outputs.EdcSpaClientId}
+  PlatformDevelopmentSpaClientId: {Condition: IsProduction, Value: !GetAtt Identity.Outputs.PlatformDevelopmentSpaClientId}
+  AurinaraDevelopmentSpaClientId: {Condition: IsProduction, Value: !GetAtt Identity.Outputs.AurinaraDevelopmentSpaClientId}
+  EdcDevelopmentSpaClientId: {Condition: IsProduction, Value: !GetAtt Identity.Outputs.EdcDevelopmentSpaClientId}
   AurinaraServiceClientId: {Value: !GetAtt Identity.Outputs.AurinaraServiceClientId}
   EdcServiceClientId: {Value: !GetAtt Identity.Outputs.EdcServiceClientId}
   AurinaraServiceClientSecretArn: {Value: !GetAtt Identity.Outputs.AurinaraServiceClientSecretArn}

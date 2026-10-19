@@ -121,6 +121,27 @@ interchangeable: Platform reserves their `client_id` validation path for
 registered service clients. The console stores only a same-origin return path
 with the PKCE transaction and restores it after a successful callback.
 
+### Local managed-login clients
+
+The production user pool also owns three public development SPA clients, one per
+product. They have no client secret, use authorization code + PKCE, and accept
+only the documented localhost callback and logout URLs. Their audiences remain
+separate from the deployed SPA clients and are not added to production product
+API audience settings.
+
+The production stack exports `PlatformDevelopmentSpaClientId`,
+`AurinaraDevelopmentSpaClientId`, and `EdcDevelopmentSpaClientId`. From a local
+Platform checkout, configure the ignored local API/frontend environments for all
+three repositories with:
+
+```powershell
+python scripts/configure_local_managed_login.py --write
+```
+
+The script reads public stack outputs, preserves unrelated dotenv settings, sets
+the local APIs to validate the matching development audience, and enables
+managed-login-only UI behavior. It does not retrieve service-client secrets.
+
 ### Automatic create-only registration
 
 After Cognito confirms a new user, its post-confirmation Lambda writes a minimal
