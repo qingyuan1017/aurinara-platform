@@ -476,6 +476,7 @@ def test_platform_admin_can_manage_system_product_access(session_factory) -> Non
 
 def test_product_role_catalog_sync_registers_stable_reviewed_roles(session_factory) -> None:
     admin, _ = _seed_admin(session_factory)
+    source_role_id = uuid4()
     with session_factory.begin() as session:
         service_user = User(
             issuer="https://issuer",
@@ -500,14 +501,35 @@ def test_product_role_catalog_sync_registers_stable_reviewed_roles(session_facto
             module="operational",
             allowed_scope_levels=["system", "study"],
         )
-        session.add_all([service_user, service_role, sync_permission, user_list, study_read])
+        legacy_role = Role(
+            id=source_role_id,
+            product="aurinara-edc",
+            name="Legacy EDC Administrator",
+            source_role_id=None,
+        )
+        session.add_all(
+            [
+                service_user,
+                service_role,
+                sync_permission,
+                user_list,
+                study_read,
+                legacy_role,
+            ]
+        )
         session.flush()
         session.add_all(
             [
                 RolePermission(role_id=service_role.id, permission_code=sync_permission.code),
+                RolePermission(role_id=legacy_role.id, permission_code=user_list.code),
                 RoleAssignment(
                     user_id=service_user.id,
                     role_id=service_role.id,
+                    assigned_by=admin.id,
+                ),
+                RoleAssignment(
+                    user_id=admin.id,
+                    role_id=legacy_role.id,
                     assigned_by=admin.id,
                 ),
             ]
@@ -520,7 +542,6 @@ def test_product_role_catalog_sync_registers_stable_reviewed_roles(session_facto
     )
     client = TestClient(app)
     headers = {"Authorization": "Bearer service-token"}
-    source_role_id = uuid4()
     response = client.put(
         "/v1/products/aurinara-edc/roles",
         headers=headers,
@@ -540,6 +561,16 @@ def test_product_role_catalog_sync_registers_stable_reviewed_roles(session_facto
     assert response.json()[0]["id"] == str(source_role_id)
     assert response.json()[0]["source_role_id"] == str(source_role_id)
     assert response.json()[0]["permission_codes"] == ["edc.study.read", "edc.user.list"]
+    with session_factory() as session:
+        adopted = session.get(Role, source_role_id)
+        assert adopted is not None
+        assert adopted.source_role_id == source_role_id
+        assert session.scalar(
+            select(RoleAssignment.id).where(
+                RoleAssignment.user_id == admin.id,
+                RoleAssignment.role_id == source_role_id,
+            )
+        )
 
 
 def test_ctms_site_sync_populates_study_membership_options(session_factory) -> None:

@@ -1225,6 +1225,7 @@ class MembershipService:
                     Role.source_role_id == definition.source_role_id,
                 )
             )
+            created = False
             if role is None:
                 collision = session.scalar(
                     select(Role).where(
@@ -1232,37 +1233,45 @@ class MembershipService:
                         Role.name == definition.name,
                     )
                 )
-                if collision is not None:
+                if collision is not None and collision.id != definition.source_role_id:
                     raise Problem(
                         409,
                         "role_name_conflict",
                         "A role with this name is already managed by another source",
                     )
-                id_collision = session.get(Role, definition.source_role_id)
+                id_collision = session.scalar(
+                    select(Role)
+                    .options(selectinload(Role.permissions))
+                    .where(Role.id == definition.source_role_id)
+                )
                 if id_collision is not None:
-                    raise Problem(
-                        409,
-                        "role_id_conflict",
-                        "The source role ID is already owned by another role",
+                    if id_collision.product != product or id_collision.source_role_id is not None:
+                        raise Problem(
+                            409,
+                            "role_id_conflict",
+                            "The source role ID is already owned by another role",
+                        )
+                    role = id_collision
+                else:
+                    role = Role(
+                        id=definition.source_role_id,
+                        source_role_id=definition.source_role_id,
+                        product=product,
+                        name=definition.name,
+                        description=definition.description,
+                        scope_level=definition.scope_level,
+                        assignable=True,
+                        status="active",
                     )
-                role = Role(
-                    id=definition.source_role_id,
-                    source_role_id=definition.source_role_id,
-                    product=product,
-                    name=definition.name,
-                    description=definition.description,
-                    scope_level=definition.scope_level,
-                    assignable=True,
-                    status="active",
-                )
-                session.add(role)
-                session.flush()
-                session.add_all(
-                    RolePermission(role_id=role.id, permission_code=code)
-                    for code in permission_codes
-                )
-                changed_roles.append((role, permission_codes, None))
-            else:
+                    session.add(role)
+                    session.flush()
+                    session.add_all(
+                        RolePermission(role_id=role.id, permission_code=code)
+                        for code in permission_codes
+                    )
+                    changed_roles.append((role, permission_codes, None))
+                    created = True
+            if not created:
                 current_codes = role.permission_codes
                 previous = self._role_snapshot(role, current_codes)
                 if role.name != definition.name and session.scalar(
@@ -1278,6 +1287,7 @@ class MembershipService:
                         "A role with this name is already managed by another source",
                     )
                 expected = {
+                    "source_role_id": definition.source_role_id,
                     "name": definition.name,
                     "description": definition.description,
                     "scope_level": definition.scope_level,
