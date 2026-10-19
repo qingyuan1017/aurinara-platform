@@ -1,0 +1,7 @@
+interface:
+  display_name: "Deploy Aurinara Suite"
+  short_description: "Safely deploy and recover the Aurinara AWS suite"
+  default_prompt: "Use $deploy-aurinara-suite to plan and verify an Aurinara suite deployment."
+
+policy:
+  allow_implicit_invocation: true
