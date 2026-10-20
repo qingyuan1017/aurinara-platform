@@ -94,7 +94,7 @@ def configuration(
             "OIDC_AUDIENCE": platform_client,
             "OIDC_USER_AUDIENCES": ",".join([platform_client, aurinara_client, edc_client]),
             "OIDC_JWKS_URL": jwks,
-            "CORS_ORIGINS": "http://localhost:5173,http://localhost:5174",
+            "CORS_ORIGINS": "http://localhost:5173,http://localhost:5174,http://localhost:5175",
         },
         platform_repo / "frontend" / ".env": {
             "VITE_COGNITO_REGION": region,
@@ -108,6 +108,7 @@ def configuration(
             "VITE_MANAGED_LOGIN_ONLY": "true",
         },
         aurinara_repo / ".env": {
+            "APP_CORS_ALLOW_ORIGINS": "http://localhost:5175,http://127.0.0.1:5175",
             "JWT_ISSUER": issuer,
             "JWT_AUDIENCE": aurinara_client,
             "JWT_JWKS_URL": jwks,
@@ -116,8 +117,8 @@ def configuration(
         aurinara_repo / "frontend" / ".env": {
             "VITE_OIDC_AUTHORITY": issuer,
             "VITE_OIDC_CLIENT_ID": aurinara_client,
-            "VITE_OIDC_REDIRECT_URI": "http://localhost:5173/auth/callback",
-            "VITE_OIDC_LOGOUT_URI": "http://localhost:5173/login",
+            "VITE_OIDC_REDIRECT_URI": "http://localhost:5175/auth/callback",
+            "VITE_OIDC_LOGOUT_URI": "http://localhost:5175/login",
             "VITE_OIDC_END_SESSION_ENDPOINT": outputs["LogoutUrl"],
             "VITE_OIDC_SCOPES": "openid profile email",
         },

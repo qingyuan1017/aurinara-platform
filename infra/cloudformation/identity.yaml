@@ -221,8 +221,8 @@ Resources:
     Properties:
       <<: *SpaClient
       ClientName: aurinara-development-spa
-      CallbackURLs: ['http://localhost:5173/auth/callback']
-      LogoutURLs: ['http://localhost:5173/login']
+      CallbackURLs: ['http://localhost:5175/auth/callback']
+      LogoutURLs: ['http://localhost:5175/login']
   EdcDevelopmentSpaClient:
     Condition: IsProduction
     Type: AWS::Cognito::UserPoolClient

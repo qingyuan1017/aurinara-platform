@@ -134,6 +134,12 @@ The production stack exports `PlatformDevelopmentSpaClientId`,
 Platform checkout, configure the ignored local API/frontend environments for all
 three repositories with:
 
+| Application | Local frontend | Callback path |
+| --- | --- | --- |
+| Aurinara EDC | `http://localhost:5173` | `/auth/cognito/callback` |
+| Aurinara Platform | `http://localhost:5174` | `/auth/callback` |
+| Aurinara | `http://localhost:5175` | `/auth/callback` |
+
 ```powershell
 python scripts/configure_local_managed_login.py --write
 ```

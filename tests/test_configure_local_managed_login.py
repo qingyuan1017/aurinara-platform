@@ -64,11 +64,25 @@ def test_configuration_uses_separate_clients_and_local_callbacks(tmp_path: Path)
         edc_repo=tmp_path / "edc",
     )
     platform_frontend = settings[tmp_path / "platform" / "frontend" / ".env"]
+    aurinara_backend = settings[tmp_path / "aurinara" / ".env"]
     aurinara_frontend = settings[tmp_path / "aurinara" / "frontend" / ".env"]
     edc_frontend = settings[tmp_path / "edc" / "frontend" / ".env"]
     assert platform_frontend["VITE_OIDC_CLIENT_ID"] == "platform-development"
     assert platform_frontend["VITE_MANAGED_LOGIN_ONLY"] == "true"
     assert aurinara_frontend["VITE_OIDC_CLIENT_ID"] == "aurinara-development"
+    assert aurinara_frontend["VITE_OIDC_REDIRECT_URI"] == (
+        "http://localhost:5175/auth/callback"
+    )
+    assert aurinara_frontend["VITE_OIDC_LOGOUT_URI"] == "http://localhost:5175/login"
+    assert aurinara_backend["APP_CORS_ALLOW_ORIGINS"] == (
+        "http://localhost:5175,http://127.0.0.1:5175"
+    )
     assert edc_frontend["VITE_COGNITO_CLIENT_ID"] == "edc-development"
+    assert edc_frontend["VITE_COGNITO_REDIRECT_URI"] == (
+        "http://localhost:5173/auth/cognito/callback"
+    )
     assert edc_frontend["VITE_MANAGED_LOGIN_ONLY"] == "true"
     assert settings[tmp_path / "edc" / "backend" / ".env"]["LOCAL_AUTH_ENABLED"] == "false"
+    assert settings[tmp_path / "platform" / ".env"]["CORS_ORIGINS"] == (
+        "http://localhost:5173,http://localhost:5174,http://localhost:5175"
+    )
