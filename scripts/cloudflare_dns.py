@@ -87,18 +87,40 @@ def configure_dns(
     output_reader: StackOutputReader = read_stack_output,
     requester: Requester = cloudflare_request,
 ) -> str:
-    """Upsert the application hostname as a non-proxied CloudFront CNAME."""
-    application_url = output_reader(stack_name, "ApplicationUrl")
-    parsed_url = parse.urlparse(application_url)
-    if parsed_url.scheme != "https" or not parsed_url.hostname:
-        raise CloudflareDnsError("Stack output ApplicationUrl is not an HTTPS URL")
-    record_name = parsed_url.hostname
-
-    target = output_reader(stack_name, "CloudFrontDistributionDomainName").rstrip(".")
-    if re.fullmatch(r"[a-z0-9-]+\.cloudfront\.net", target) is None:
-        raise CloudflareDnsError(
-            "Stack output CloudFrontDistributionDomainName is invalid"
+    """Upsert the application and ONLYOFFICE DNS-only CloudFront CNAMEs."""
+    pairs = (
+        ("ApplicationUrl", "CloudFrontDistributionDomainName"),
+        ("OfficeUrl", "OfficeCloudFrontDistributionDomainName"),
+    )
+    messages = []
+    for url_key, target_key in pairs:
+        application_url = output_reader(stack_name, url_key)
+        parsed_url = parse.urlparse(application_url)
+        if parsed_url.scheme != "https" or not parsed_url.hostname:
+            raise CloudflareDnsError(f"Stack output {url_key} is not an HTTPS URL")
+        messages.append(
+            _upsert_cname(
+                stack_name,
+                zone_id,
+                api_token,
+                parsed_url.hostname,
+                output_reader(stack_name, target_key).rstrip("."),
+                requester,
+            )
         )
+    return "; ".join(messages)
+
+
+def _upsert_cname(
+    stack_name: str,
+    zone_id: str,
+    api_token: str,
+    record_name: str,
+    target: str,
+    requester: Requester,
+) -> str:
+    if re.fullmatch(r"[a-z0-9-]+\.cloudfront\.net", target) is None:
+        raise CloudflareDnsError("Stack output CloudFront distribution domain is invalid")
 
     api_base = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
     query = parse.urlencode({"type": "CNAME", "name": record_name})
@@ -107,9 +129,7 @@ def configure_dns(
     if not isinstance(records, list):
         raise CloudflareDnsError("Cloudflare DNS lookup returned an invalid result")
     if len(records) > 1:
-        raise CloudflareDnsError(
-            f"Cloudflare returned multiple CNAME records for {record_name}"
-        )
+        raise CloudflareDnsError(f"Cloudflare returned multiple CNAME records for {record_name}")
 
     payload: Response = {
         "type": "CNAME",
@@ -143,9 +163,7 @@ def main() -> None:
     zone_id = os.environ.get("CLOUDFLARE_ZONE_ID", "")
     api_token = os.environ.get("CLOUDFLARE_API_TOKEN", "")
     if not zone_id or not api_token:
-        raise CloudflareDnsError(
-            "CLOUDFLARE_ZONE_ID and CLOUDFLARE_API_TOKEN are required"
-        )
+        raise CloudflareDnsError("CLOUDFLARE_ZONE_ID and CLOUDFLARE_API_TOKEN are required")
     print(configure_dns(args.stack_name, zone_id, api_token))
 
 

@@ -23,9 +23,12 @@ from aurinara_platform.models import (
     OutboxEvent,
     Permission,
     RepositoryFileVersion,
+    RepositoryJob,
     RepositoryNode,
     RepositoryNodeRevision,
+    RepositoryOfficeSession,
     RepositorySourceLink,
+    RepositoryVersionProfile,
     Site,
     StoredObject,
     Study,
@@ -113,10 +116,16 @@ class RepositoryService:
             raise Problem(404, "study_not_found", "The study was not found")
         parent = self._parent(session, study_id, command.parent_id)
         if command.access is None:
-            product = "platform"
-            read_action = "platform.repository.read"
-            write_action = "platform.repository.write"
-            site_id = None
+            if parent is None:
+                product = "platform"
+                read_action = "platform.repository.read"
+                write_action = "platform.repository.write"
+                site_id = None
+            else:
+                product = parent.source_product
+                read_action = parent.required_read_action
+                write_action = parent.required_write_action
+                site_id = parent.site_id
         else:
             read_action = command.access.read_action
             write_action = command.access.write_action
@@ -264,6 +273,7 @@ class RepositoryService:
         )
         session.add(version)
         session.flush()
+        self.queue_analysis(session, version)
         session.add(
             RepositorySourceLink(
                 node_id=node.id,
@@ -642,6 +652,20 @@ class RepositoryService:
         node = self.get_node(session, node_id, principal, write=True)
         if node.kind != "file" or node.lifecycle_status != "active":
             raise Problem(409, "invalid_repository_node", "The entry cannot accept a version")
+        active_office_session = session.scalar(
+            select(RepositoryOfficeSession.id).where(
+                RepositoryOfficeSession.node_id == node.id,
+                RepositoryOfficeSession.state == "active",
+                RepositoryOfficeSession.editable.is_(True),
+                RepositoryOfficeSession.lease_expires_at > utc_now(),
+            )
+        )
+        if active_office_session is not None:
+            raise Problem(
+                409,
+                "office_edit_in_progress",
+                "A collaborative Office edit is active for the current version",
+            )
         if command.product != node.source_product:
             raise Problem(422, "repository_product_mismatch", "The version product does not match")
         stored_object = session.get(StoredObject, command.object_id)
@@ -664,10 +688,12 @@ class RepositoryService:
             version_number=next_number,
             object_id=stored_object.id,
             object_reference_id=reference.id,
+            derived_from_version_id=command.derived_from_version_id,
             created_by=actor.id,
         )
         session.add(version)
         session.flush()
+        self.queue_analysis(session, version)
         session.add(
             RepositorySourceLink(
                 node_id=node.id,
@@ -689,6 +715,24 @@ class RepositoryService:
         self._record(session, node, "version_added", actor)
         self._emit(session, node, "platform.repository.file.version_added.v1")
         return version
+
+    @staticmethod
+    def queue_analysis(session: Session, version: RepositoryFileVersion) -> RepositoryJob:
+        profile = session.get(RepositoryVersionProfile, version.id)
+        if profile is None:
+            profile = RepositoryVersionProfile(version_id=version.id)
+            session.add(profile)
+        key = f"analyze:{version.id}"
+        job = session.scalar(select(RepositoryJob).where(RepositoryJob.idempotency_key == key))
+        if job is None:
+            job = RepositoryJob(
+                job_type="analyze",
+                version_id=version.id,
+                requested_by=version.created_by,
+                idempotency_key=key,
+            )
+            session.add(job)
+        return job
 
     def list_versions(
         self, session: Session, node_id: UUID, principal: Principal

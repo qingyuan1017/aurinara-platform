@@ -58,6 +58,25 @@ class Settings(BaseSettings):
     identity_registration_queue_url: str | None = None
     cors_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:5175"
 
+    repository_rich_preview_enabled: bool = True
+    repository_conversion_enabled: bool = True
+    repository_pdf_annotations_enabled: bool = True
+    repository_office_enabled: bool = False
+    repository_tabular_max_bytes: int = 1024 * 1024 * 1024
+    repository_worker_memory_limit: str = "512MB"
+    repository_worker_threads: int = 2
+    repository_query_timeout_seconds: int = 20
+    onlyoffice_public_url: str = "http://localhost:8083"
+    onlyoffice_internal_url: str = "http://localhost:8083"
+    onlyoffice_platform_url: str = "http://host.docker.internal:8000"
+    onlyoffice_jwt_secret: SecretStr = SecretStr("local-onlyoffice-change-me")
+    onlyoffice_image: str = (
+        "onlyoffice/documentserver:9.3.1.2@"
+        "sha256:290a0a1406a485acc8a6bc20418ac7158c5eec78b4844c218f8f975a9800ddbc"
+    )
+    onlyoffice_session_ttl_seconds: int = 6 * 60 * 60
+    onlyoffice_max_output_bytes: int = 250 * 1024 * 1024
+
     @property
     def oidc_algorithm_list(self) -> list[str]:
         return [item.strip() for item in self.oidc_algorithms.split(",") if item.strip()]
@@ -81,6 +100,10 @@ class Settings(BaseSettings):
         "object_presign_ttl_seconds",
         "object_max_parts",
         "oidc_clock_skew_seconds",
+        "repository_worker_threads",
+        "repository_query_timeout_seconds",
+        "onlyoffice_session_ttl_seconds",
+        "onlyoffice_max_output_bytes",
     )
     @classmethod
     def validate_positive(cls, value: int) -> int:
@@ -117,6 +140,11 @@ class Settings(BaseSettings):
                 raise ValueError("object-store encryption is required in production")
             if self.object_store_sse_algorithm == "aws:kms" and not self.object_store_kms_key_id:
                 raise ValueError("an object-store KMS key ID is required for aws:kms encryption")
+            if (
+                self.repository_office_enabled
+                and self.onlyoffice_jwt_secret.get_secret_value() == "local-onlyoffice-change-me"
+            ):
+                raise ValueError("the default ONLYOFFICE JWT secret is forbidden in production")
         return self
 
 

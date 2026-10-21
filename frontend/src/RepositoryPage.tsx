@@ -1,6 +1,7 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, Clock3, Download, File, Folder, FolderInput, History, MoreHorizontal, Plus, RefreshCw, RotateCcw, Search, Upload } from 'lucide-react'
-import { api, ApiError, uploadNeutralFile } from './api'
+import { api, ApiError, uploadNeutralFile, waitForRepositoryJob, type UploadProgress } from './api'
+import { RepositoryViewer } from './RepositoryViewer'
 import type { RepositoryNode, RepositoryVersion, Site, Study } from './types'
 
 type Notify = (kind: 'ok' | 'error', text: string) => void
@@ -29,8 +30,28 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
   const [versions, setVersions] = useState<RepositoryVersion[]>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
+  const [collectionCapabilities, setCollectionCapabilities] = useState({ can_upload: false, can_create_folder: false })
+  const [viewerOpen, setViewerOpen] = useState(false)
   const uploadRef = useRef<HTMLInputElement>(null)
+  const uploadAbort = useRef<AbortController>()
+  const deepNodeId = useRef<string | null>(null)
   const currentFolder = path.at(-1) || null
+
+  useEffect(() => {
+    const parameters = new URLSearchParams(location.search)
+    const linkedStudy = parameters.get('study')
+    const linkedVersion = parameters.get('version')
+    if (linkedStudy && studies.some((study) => study.id === linkedStudy)) setStudyId(linkedStudy)
+    if (!linkedVersion) return
+    setView('all')
+    void api.repositoryVersion(linkedVersion).then(async (binding) => {
+      if (linkedStudy && binding.study_id !== linkedStudy) throw new Error('Deep link study and version do not match')
+      deepNodeId.current = binding.node_id
+      setSelected(await api.repositoryNode(binding.node_id))
+      setViewerOpen(true)
+    }).catch((error) => notify('error', message(error)))
+  }, [notify, studies])
 
   const load = useCallback(async () => {
     if (!studyId) return
@@ -45,9 +66,10 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
         api.sites(studyId),
       ])
       setItems(page.items)
+      setCollectionCapabilities(page.capabilities)
       setFolders(folderPage.items.filter((item) => item.kind === 'folder' && item.lifecycle_status === 'active'))
       setSites(studySites)
-      setSelected((value) => page.items.find((item) => item.id === value?.id) || null)
+      setSelected((value) => page.items.find((item) => item.id === value?.id) || (value?.id === deepNodeId.current ? value : null))
     } catch (error) { notify('error', message(error)) }
     finally { setLoading(false) }
   }, [studyId, view, currentFolder, query, notify])
@@ -101,12 +123,23 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
     if (!studyId || files.length === 0) return
     setUploading(true)
     try {
-      for (const file of files) await uploadNeutralFile(studyId, file, currentFolder?.id || null, replace)
+      uploadAbort.current = new AbortController()
+      for (const file of files) await uploadNeutralFile(studyId, file, currentFolder?.id || null, replace, setUploadProgress, uploadAbort.current.signal)
       notify('ok', replace ? 'New version added' : `${files.length} file${files.length === 1 ? '' : 's'} uploaded`)
       await load()
       if (replace) setVersions(await api.repositoryVersions(replace.id))
     } catch (error) { notify('error', message(error)) }
-    finally { setUploading(false); event.target.value = '' }
+    finally { setUploading(false); setUploadProgress(null); uploadAbort.current = undefined; event.target.value = '' }
+  }
+
+  const convert = async (target: 'csv' | 'parquet') => {
+    const version = versions[0]
+    if (!selected || !version) return
+    const stem = selected.display_name.replace(/\.[^.]+$/, '')
+    const filename = prompt('Output filename', `${stem}.${target}`)?.trim()
+    if (!filename) return
+    try { const job = await api.convertRepositoryVersion(version.id, target, filename); notify('ok', 'Conversion queued'); await waitForRepositoryJob(job); notify('ok', 'Conversion completed'); await load() }
+    catch (error) { notify('error', message(error)) }
   }
 
   if (!studyId) return <div className="empty"><Folder /><span>Create or join a study to use Repository.</span></div>
@@ -114,9 +147,10 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
     <section className="repository-commandbar">
       <select aria-label="Study" value={studyId} onChange={(event) => { setStudyId(event.target.value); setPath([]); setSelected(null) }}>{studies.map((study) => <option key={study.id} value={study.id}>{study.code} · {study.display_name}</option>)}</select>
       <div className="search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search authorized files" /></div>
-      <button className="secondary" onClick={() => void createFolder()}><Plus />Folder</button>
-      <button className="primary" disabled={uploading} onClick={() => uploadRef.current?.click()}><Upload />{uploading ? 'Uploading…' : 'Upload'}</button>
+      <button className="secondary" disabled={!collectionCapabilities.can_create_folder} onClick={() => void createFolder()}><Plus />Folder</button>
+      <button className="primary" disabled={uploading || !collectionCapabilities.can_upload} onClick={() => uploadRef.current?.click()}><Upload />{uploading ? 'Uploading…' : 'Upload'}</button>
       <input ref={uploadRef} hidden multiple type="file" onChange={(event) => void upload(event)} />
+      {uploadProgress && <span className="upload-progress">{uploadProgress.phase} {Math.round(uploadProgress.loaded / Math.max(1, uploadProgress.total) * 100)}% <button onClick={() => uploadAbort.current?.abort()}>Cancel</button></span>}
       <button className="icon secondary" aria-label="Refresh" onClick={() => void load()}><RefreshCw className={loading ? 'spinner' : ''} /></button>
     </section>
     <nav className="repository-views" aria-label="Repository views">{views.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => { setView(item.id); setSelected(null) }}>{item.label}</button>)}</nav>
@@ -133,11 +167,12 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
       </section>
       <aside className="repository-detail">{selected ? <>
         <header><span className="repo-detail-icon">{selected.kind === 'folder' ? <Folder /> : <File />}</span><div><h2>{selected.display_name}</h2><p>{selected.source_product} · {selected.classification}</p></div><MoreHorizontal /></header>
-        <div className="repo-actions"><button className="secondary" onClick={() => void rename()}>Rename</button>{selected.kind === 'file' && <button className="primary" onClick={() => void download()}><Download />Download</button>}<button className="secondary" onClick={() => void archive()}>{selected.lifecycle_status === 'archived' ? <><RotateCcw />Restore</> : <><Archive />Archive</>}</button></div>
-        {selected.lifecycle_status === 'active' && <label className="field"><span>Move to equivalent-scope folder</span><select value={selected.parent_id || ''} onChange={(event) => void move(event.target.value)}><option value="">Repository root</option>{scopedDestinations.map((folder) => <option key={folder.id} value={folder.id}>{folder.display_name}</option>)}</select></label>}
+        <div className="repo-actions">{selected.capabilities.can_manage && <button className="secondary" onClick={() => void rename()}>Rename</button>}{selected.kind === 'file' && <button className="primary" onClick={() => void download()}><Download />Download</button>}{selected.kind === 'file' && selected.capabilities.can_preview && <button className="secondary" onClick={() => setViewerOpen((value) => !value)}>{viewerOpen ? 'Close preview' : 'Preview'}</button>}{selected.capabilities.can_manage && <button className="secondary" onClick={() => void archive()}>{selected.lifecycle_status === 'archived' ? <><RotateCcw />Restore</> : <><Archive />Archive</>}</button>}</div>
+        {selected.lifecycle_status === 'active' && selected.capabilities.can_manage && <label className="field"><span>Move to equivalent-scope folder</span><select value={selected.parent_id || ''} onChange={(event) => void move(event.target.value)}><option value="">Repository root</option>{scopedDestinations.map((folder) => <option key={folder.id} value={folder.id}>{folder.display_name}</option>)}</select></label>}
         <dl><dt>Type</dt><dd>{selected.source_resource_type.replaceAll('_', ' ')}</dd><dt>Module</dt><dd>{selected.module || '—'}</dd><dt>Scope</dt><dd>{selected.site_id ? siteNames.get(selected.site_id) || 'Unavailable site' : 'Study-wide'}</dd></dl>
         <details className="technical-details"><summary>Technical details</summary><dl><dt>Read permission</dt><dd className="mono">{selected.required_read_action}</dd><dt>Internal reference</dt><dd className="mono">{selected.source_resource_id || '—'}</dd></dl></details>
-        {selected.kind === 'file' && <section className="version-list"><h3><History />Version history</h3>{selected.source_product === 'platform' && selected.lifecycle_status === 'active' && <label className="replace-button"><Upload />Replace<input hidden type="file" onChange={(event) => void upload(event, selected)} /></label>}{versions.map((version) => <button key={version.id} onClick={() => void download(version)}><span>v{version.version_number}</span><small>{new Date(version.created_at).toLocaleString()} · {(version.size_bytes / 1024).toFixed(1)} KB</small><Download /></button>)}</section>}
+        {selected.kind === 'file' && versions[0] && viewerOpen && <RepositoryViewer node={selected} version={versions[0]} onChanged={() => void load()} />}
+        {selected.kind === 'file' && <section className="version-list"><h3><History />Version history</h3>{selected.capabilities.can_manage && selected.lifecycle_status === 'active' && <label className="replace-button"><Upload />New version<input hidden type="file" onChange={(event) => void upload(event, selected)} /></label>}{versions[0]?.capabilities.conversion_targets.map((target) => <button key={target} onClick={() => void convert(target)}>Convert to {target.toUpperCase()}</button>)}{versions.map((version) => <button key={version.id} onClick={() => void download(version)}><span>v{version.version_number}</span><small>{version.profile?.file_kind || version.media_type} · {version.profile?.processing_status || 'pending'} · {new Date(version.created_at).toLocaleString()} · {(version.size_bytes / 1024).toFixed(1)} KB</small><Download /></button>)}</section>}
       </> : <div className="empty"><FolderInput /><span>Select an entry to see details and versions.</span></div>}</aside>
     </div>
   </div>

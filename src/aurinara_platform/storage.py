@@ -1,6 +1,8 @@
 """Private S3-compatible object storage and malware-scanning boundaries."""
 
 import hashlib
+import tempfile
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -39,6 +41,24 @@ class ObjectStorage(Protocol):
     def facts(self, key: str) -> ObjectFacts: ...
 
     def presign_download(self, key: str) -> str: ...
+
+    def read_bytes(self, key: str, *, max_bytes: int | None = None) -> bytes: ...
+
+    def iter_bytes(
+        self, key: str, *, chunk_size: int = 1024 * 1024, max_bytes: int | None = None
+    ) -> Iterator[bytes]: ...
+
+    def write_bytes(self, key: str, data: bytes, media_type: str, sha256: str) -> ObjectFacts: ...
+
+    def write_stream(
+        self,
+        key: str,
+        chunks: Iterable[bytes],
+        media_type: str,
+        sha256: str,
+        *,
+        size_bytes: int | None = None,
+    ) -> ObjectFacts: ...
 
     def delete(self, key: str) -> None: ...
 
@@ -151,6 +171,65 @@ class S3ObjectStorage:
                 ExpiresIn=self._presign_ttl,
             )
         )
+
+    def read_bytes(self, key: str, *, max_bytes: int | None = None) -> bytes:
+        return b"".join(self.iter_bytes(key, max_bytes=max_bytes))
+
+    def iter_bytes(
+        self, key: str, *, chunk_size: int = 1024 * 1024, max_bytes: int | None = None
+    ) -> Iterator[bytes]:
+        response = self._client.get_object(Bucket=self._bucket, Key=key)
+        body = response["Body"]
+        read = 0
+        try:
+            for chunk in body.iter_chunks(chunk_size=chunk_size):
+                if not chunk:
+                    continue
+                read += len(chunk)
+                if max_bytes is not None and read > max_bytes:
+                    raise ValueError("object exceeds the requested read limit")
+                yield bytes(chunk)
+        finally:
+            body.close()
+
+    def write_bytes(self, key: str, data: bytes, media_type: str, sha256: str) -> ObjectFacts:
+        return self.write_stream(key, (data,), media_type, sha256, size_bytes=len(data))
+
+    def write_stream(
+        self,
+        key: str,
+        chunks: Iterable[bytes],
+        media_type: str,
+        sha256: str,
+        *,
+        size_bytes: int | None = None,
+    ) -> ObjectFacts:
+        digest = hashlib.sha256()
+        actual_size = 0
+        with tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024) as body:
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                digest.update(chunk)
+                actual_size += len(chunk)
+                body.write(chunk)
+            actual_sha256 = digest.hexdigest()
+            if actual_sha256 != sha256 or (size_bytes is not None and actual_size != size_bytes):
+                raise ValueError("stream checksum or size does not match")
+            body.seek(0)
+            options: dict[str, object] = {
+                "Bucket": self._bucket,
+                "Key": key,
+                "Body": body,
+                "ContentType": media_type,
+                "Metadata": {"sha256": sha256},
+            }
+            if self._sse_algorithm != "none":
+                options["ServerSideEncryption"] = self._sse_algorithm
+            if self._kms_key_id:
+                options["SSEKMSKeyId"] = self._kms_key_id
+            self._client.put_object(**options)
+        return ObjectFacts(actual_size, actual_sha256, media_type)
 
     def delete(self, key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=key)

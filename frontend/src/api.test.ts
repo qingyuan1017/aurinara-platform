@@ -116,4 +116,29 @@ describe('platform API client', () => {
       }),
     )
   })
+
+  it('protects shared PDF annotation edits with the loaded revision', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'annotation-1', revision: 5 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetch)
+    prepareBrowserGlobals()
+    await api.patchAnnotation({ id: 'annotation-1', revision: 4 } as never, { status: 'resolved' })
+    expect(fetch).toHaveBeenCalledWith(
+      '/v1/repository/annotations/annotation-1',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: expect.objectContaining({ 'If-Match': '"4"' }),
+      }),
+    )
+  })
+
+  it('posts typed tabular preview requests to the exact immutable version', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ schema: [], rows: [], total_rows: 0, page: 1, page_size: 100 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetch)
+    prepareBrowserGlobals()
+    await api.tabularPreview('version-1', { page: 1, page_size: 100, filters: [], sort: [] })
+    expect(fetch).toHaveBeenCalledWith(
+      '/v1/repository/versions/version-1/tabular-preview',
+      expect.objectContaining({ method: 'POST', body: expect.stringContaining('"page_size":100') }),
+    )
+  })
 })

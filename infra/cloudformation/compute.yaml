@@ -12,6 +12,7 @@ Parameters:
   AlbSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
   ApiSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
   WorkerSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
+  OfficeSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
   DatabaseEndpoint: {Type: String}
   DatabaseSecretArn: {Type: String}
   DataKeyArn: {Type: String}
@@ -28,6 +29,17 @@ Parameters:
   IdentityRegistrationQueueArn: {Type: String}
   IdentityRegistrationQueueUrl: {Type: String}
   BrowserOrigins: {Type: String}
+  PlatformPublicUrl: {Type: String}
+  OfficeDomain: {Type: String}
+  OnlyOfficeImage:
+    Type: String
+    AllowedPattern: '^onlyoffice/documentserver:[^@]+@sha256:[0-9a-f]{64}$'
+  OnlyOfficeJwtSecretArn: {Type: String}
+  OnlyOfficeFileSystemId: {Type: String}
+  OnlyOfficeDataAccessPointId: {Type: String}
+  OnlyOfficeLibAccessPointId: {Type: String}
+  OnlyOfficeDatabaseAccessPointId: {Type: String}
+  OnlyOfficeLogsAccessPointId: {Type: String}
   MalwareScannerUrl: {Type: String, Default: ''}
   MalwareScannerTokenSecretArn:
     Type: String
@@ -79,8 +91,8 @@ Resources:
                 Action: 'secretsmanager:GetSecretValue'
                 Resource: !If
                   - HasMalwareScanner
-                  - [!Ref DatabaseSecretArn, !Ref MalwareScannerTokenSecretArn]
-                  - [!Ref DatabaseSecretArn]
+                  - [!Ref DatabaseSecretArn, !Ref MalwareScannerTokenSecretArn, !Ref OnlyOfficeJwtSecretArn]
+                  - [!Ref DatabaseSecretArn, !Ref OnlyOfficeJwtSecretArn]
               - {Effect: Allow, Action: ['kms:Decrypt', 'kms:DescribeKey'], Resource: !Ref DataKeyArn}
   ApplicationTaskRole:
     Type: AWS::IAM::Role
@@ -126,6 +138,16 @@ Resources:
       HealthCheckPath: /health/live
       Matcher: {HttpCode: '200'}
       TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: '30'}]
+  OfficeTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      TargetType: ip
+      HealthCheckPath: /healthcheck
+      Matcher: {HttpCode: '200'}
+      TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: '60'}]
   Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -133,6 +155,15 @@ Resources:
       Port: 80
       Protocol: HTTP
       DefaultActions: [{Type: forward, TargetGroupArn: !Ref ApiTargetGroup}]
+  OfficeListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref Listener
+      Priority: 10
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig: {Values: [!Ref OfficeDomain]}
+      Actions: [{Type: forward, TargetGroupArn: !Ref OfficeTargetGroup}]
 
   PrivateLinkLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -236,8 +267,16 @@ Resources:
             - {Name: IDENTITY_REGISTRATION_QUEUE_URL, Value: !Ref IdentityRegistrationQueueUrl}
             - {Name: CORS_ORIGINS, Value: !Ref BrowserOrigins}
             - {Name: BOOTSTRAP_FIRST_USER_AS_ADMIN, Value: 'false'}
+            - {Name: REPOSITORY_RICH_PREVIEW_ENABLED, Value: 'true'}
+            - {Name: REPOSITORY_CONVERSION_ENABLED, Value: 'true'}
+            - {Name: REPOSITORY_PDF_ANNOTATIONS_ENABLED, Value: 'true'}
+            - {Name: REPOSITORY_OFFICE_ENABLED, Value: 'true'}
+            - {Name: ONLYOFFICE_PUBLIC_URL, Value: !Sub 'https://${OfficeDomain}'}
+            - {Name: ONLYOFFICE_INTERNAL_URL, Value: !Sub 'https://${OfficeDomain}'}
+            - {Name: ONLYOFFICE_PLATFORM_URL, Value: !Ref PlatformPublicUrl}
           Secrets: &ApplicationSecrets
             - {Name: DATABASE_PASSWORD, ValueFrom: !Sub '${DatabaseSecretArn}:password::'}
+            - {Name: ONLYOFFICE_JWT_SECRET, ValueFrom: !Ref OnlyOfficeJwtSecretArn}
             - !If
               - HasMalwareScanner
               - {Name: MALWARE_SCANNER_TOKEN, ValueFrom: !Ref MalwareScannerTokenSecretArn}
@@ -257,6 +296,96 @@ Resources:
       DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 50, MaximumPercent: 200}
       NetworkConfiguration: {AwsvpcConfiguration: {AssignPublicIp: DISABLED, SecurityGroups: [!Ref ApiSecurityGroupId], Subnets: !Ref AppSubnetIds}}
       LoadBalancers: [{ContainerName: api, ContainerPort: 8000, TargetGroupArn: !Ref ApiTargetGroup}]
+
+  RepositoryWorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub aurinara-platform-${Environment}-repository-worker
+      Cpu: '2048'
+      Memory: '4096'
+      EphemeralStorage: {SizeInGiB: 50}
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ApplicationTaskRole.Arn
+      ContainerDefinitions:
+        - Name: repository-worker
+          Image: !Ref ApplicationImage
+          Command: [python, scripts/aws_entrypoint.py, python, -m, aurinara_platform.repository_worker]
+          Essential: true
+          ReadonlyRootFilesystem: true
+          MountPoints: [{SourceVolume: scratch, ContainerPath: /tmp, ReadOnly: false}]
+          Environment: *ApplicationEnvironment
+          Secrets: *ApplicationSecrets
+          LinuxParameters: {InitProcessEnabled: true, Capabilities: {Drop: [ALL]}}
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref ApplicationLogGroup, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: repository-worker}}
+      Volumes: [{Name: scratch}]
+  RepositoryWorkerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: repository-worker
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref RepositoryWorkerTaskDefinition
+      DesiredCount: !If [ServicesActive, 1, 0]
+      LaunchType: FARGATE
+      DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 0, MaximumPercent: 200}
+      NetworkConfiguration: {AwsvpcConfiguration: {AssignPublicIp: DISABLED, SecurityGroups: [!Ref WorkerSecurityGroupId], Subnets: !Ref AppSubnetIds}}
+
+  OnlyOfficeTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub aurinara-platform-${Environment}-onlyoffice
+      Cpu: '2048'
+      Memory: '4096'
+      EphemeralStorage: {SizeInGiB: 50}
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
+      Volumes:
+        - Name: office-data
+          EFSVolumeConfiguration: {FilesystemId: !Ref OnlyOfficeFileSystemId, TransitEncryption: ENABLED, AuthorizationConfig: {AccessPointId: !Ref OnlyOfficeDataAccessPointId}}
+        - Name: office-lib
+          EFSVolumeConfiguration: {FilesystemId: !Ref OnlyOfficeFileSystemId, TransitEncryption: ENABLED, AuthorizationConfig: {AccessPointId: !Ref OnlyOfficeLibAccessPointId}}
+        - Name: office-database
+          EFSVolumeConfiguration: {FilesystemId: !Ref OnlyOfficeFileSystemId, TransitEncryption: ENABLED, AuthorizationConfig: {AccessPointId: !Ref OnlyOfficeDatabaseAccessPointId}}
+        - Name: office-logs
+          EFSVolumeConfiguration: {FilesystemId: !Ref OnlyOfficeFileSystemId, TransitEncryption: ENABLED, AuthorizationConfig: {AccessPointId: !Ref OnlyOfficeLogsAccessPointId}}
+      ContainerDefinitions:
+        - Name: onlyoffice
+          Image: !Ref OnlyOfficeImage
+          Essential: true
+          PortMappings: [{ContainerPort: 80, Protocol: tcp}]
+          Environment:
+            - {Name: JWT_ENABLED, Value: 'true'}
+            - {Name: JWT_HEADER, Value: AuthorizationJwt}
+          Secrets:
+            - {Name: JWT_SECRET, ValueFrom: !Ref OnlyOfficeJwtSecretArn}
+          MountPoints:
+            - {SourceVolume: office-data, ContainerPath: /var/www/onlyoffice/Data, ReadOnly: false}
+            - {SourceVolume: office-lib, ContainerPath: /var/lib/onlyoffice, ReadOnly: false}
+            - {SourceVolume: office-database, ContainerPath: /var/lib/postgresql, ReadOnly: false}
+            - {SourceVolume: office-logs, ContainerPath: /var/log/onlyoffice, ReadOnly: false}
+          HealthCheck:
+            Command: [CMD-SHELL, 'curl -fsS http://localhost/healthcheck || exit 1']
+            Interval: 30
+            Timeout: 5
+            Retries: 5
+            StartPeriod: 180
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref ApplicationLogGroup, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: onlyoffice}}
+  OnlyOfficeService:
+    Type: AWS::ECS::Service
+    DependsOn: OfficeListenerRule
+    Properties:
+      ServiceName: onlyoffice
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref OnlyOfficeTaskDefinition
+      DesiredCount: !If [ServicesActive, 1, 0]
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 300
+      DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 0, MaximumPercent: 100}
+      NetworkConfiguration: {AwsvpcConfiguration: {AssignPublicIp: DISABLED, SecurityGroups: [!Ref OfficeSecurityGroupId], Subnets: !Ref AppSubnetIds}}
+      LoadBalancers: [{ContainerName: onlyoffice, ContainerPort: 80, TargetGroupArn: !Ref OfficeTargetGroup}]
 
   PublisherTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -377,11 +506,14 @@ Resources:
 Outputs:
   ClusterName: {Value: !Ref Cluster}
   ApiServiceName: {Value: !GetAtt ApiService.Name}
+  RepositoryWorkerServiceName: {Value: !GetAtt RepositoryWorkerService.Name}
+  OnlyOfficeServiceName: {Value: !GetAtt OnlyOfficeService.Name}
   MigrationTaskDefinitionArn: {Value: !Ref MigrationTaskDefinition}
   AlbArn: {Value: !Ref InternalLoadBalancer}
   AlbDnsName: {Value: !GetAtt InternalLoadBalancer.DNSName}
   AlbFullName: {Value: !GetAtt InternalLoadBalancer.LoadBalancerFullName}
   ApiTargetGroupFullName: {Value: !GetAtt ApiTargetGroup.TargetGroupFullName}
+  OfficeTargetGroupFullName: {Value: !GetAtt OfficeTargetGroup.TargetGroupFullName}
   ListenerArn: {Value: !Ref Listener}
   AlbSecurityGroupId: {Value: !Ref AlbSecurityGroupId}
   PrivateLinkServiceId: {Condition: IsStandard, Value: !Ref EndpointService}

@@ -7,8 +7,11 @@ Parameters:
   AlarmEmail: {Type: String, Default: ''}
   ClusterName: {Type: String}
   ApiServiceName: {Type: String}
+  RepositoryWorkerServiceName: {Type: String}
+  OnlyOfficeServiceName: {Type: String}
   AlbFullName: {Type: String}
   ApiTargetGroupFullName: {Type: String}
+  OfficeTargetGroupFullName: {Type: String}
   DatabaseIdentifier: {Type: String}
   ObjectBucketName: {Type: String}
   AccessLogBucketName: {Type: String}
@@ -70,6 +73,48 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
+  OnlyOfficeUnhealthyTargets:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-onlyoffice-unhealthy
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions: [{Name: LoadBalancer, Value: !Ref AlbFullName}, {Name: TargetGroup, Value: !Ref OfficeTargetGroupFullName}]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+  RepositoryWorkerCpu:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-repository-worker-cpu
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions: [{Name: ClusterName, Value: !Ref ClusterName}, {Name: ServiceName, Value: !Ref RepositoryWorkerServiceName}]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 90
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+  OnlyOfficeCpu:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-onlyoffice-cpu
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions: [{Name: ClusterName, Value: !Ref ClusterName}, {Name: ServiceName, Value: !Ref OnlyOfficeServiceName}]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
   DatabaseCpu:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -107,7 +152,7 @@ Resources:
           {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{"title":"API","region":"${AWS::Region}","metrics":[["AWS/ApplicationELB","TargetResponseTime","LoadBalancer","${AlbFullName}",{"stat":"p95"}],[".","HTTPCode_Target_5XX_Count",".",".",{"stat":"Sum","yAxis":"right"}]]}},
           {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{"title":"Database","region":"${AWS::Region}","metrics":[["AWS/RDS","CPUUtilization","DBInstanceIdentifier","${DatabaseIdentifier}"],[".","DatabaseConnections",".","."]]}},
           {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{"title":"Outbox","region":"${AWS::Region}","metrics":[["Aurinara Platform","OutboxOldestEventSeconds","Environment","${Environment}"],[".","OutboxPublishFailures",".","."]]}},
-          {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"WAF","region":"us-east-1","metrics":[["AWS/WAFV2","BlockedRequests","WebACL","aurinara-platform-${Environment}-edge","Rule","ALL","Region","Global",{"stat":"Sum"}]]}}
+          {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"Repository and Office","region":"${AWS::Region}","metrics":[["Aurinara Platform","RepositoryJobBacklog","Environment","${Environment}"],[".","RepositoryOldestJobSeconds",".","."],[".","RepositoryPreviewFailures",".","."],[".","OnlyOfficeSaveFailures",".","."],[".","OnlyOfficeCallbackAuthFailures",".","."],[".","MalwareRejections",".","."]]}}
         ]}
   AuditTrail:
     Type: AWS::CloudTrail::Trail

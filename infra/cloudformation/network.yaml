@@ -142,6 +142,13 @@ Resources:
   WorkerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties: {GroupDescription: Aurinara Platform clinical workers, VpcId: !Ref Vpc}
+  OfficeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ONLYOFFICE Document Server
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, SourceSecurityGroupId: !Ref AlbSecurityGroup}
   IntegrationSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -191,6 +198,7 @@ Resources:
       SecurityGroupIngress:
         - {IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref WorkerSecurityGroup}
         - {IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref RunnerSecurityGroup}
+        - {IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref OfficeSecurityGroup}
   RunnerToEfs:
     Type: AWS::EC2::SecurityGroupEgress
     Properties: {GroupId: !Ref RunnerSecurityGroup, IpProtocol: tcp, FromPort: 2049, ToPort: 2049, DestinationSecurityGroupId: !Ref EfsSecurityGroup}
@@ -236,6 +244,7 @@ Outputs:
   AlbSecurityGroupId: {Value: !Ref AlbSecurityGroup}
   ApiSecurityGroupId: {Value: !Ref ApiSecurityGroup}
   WorkerSecurityGroupId: {Value: !Ref WorkerSecurityGroup}
+  OfficeSecurityGroupId: {Value: !Ref OfficeSecurityGroup}
   RunnerSecurityGroupId: {Value: !Ref RunnerSecurityGroup}
   IntegrationSecurityGroupId: {Value: !Ref IntegrationSecurityGroup}
   DatabaseSecurityGroupId: {Value: !Ref DatabaseSecurityGroup}

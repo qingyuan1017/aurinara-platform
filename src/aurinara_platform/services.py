@@ -23,6 +23,7 @@ from aurinara_platform.models import (
     Permission,
     PolicyState,
     RepositoryFileVersion,
+    RepositoryVersionProfile,
     Role,
     RoleAssignment,
     RoleChange,
@@ -1499,6 +1500,64 @@ class ObjectService:
         )
         return record
 
+    def resume_upload(
+        self,
+        session: Session,
+        object_id: UUID,
+        principal: Principal,
+    ) -> UploadSessionResponse:
+        """Issue fresh part URLs for an idempotently retried pending upload."""
+
+        record = self._get(session, object_id)
+        self._authorization.require(
+            session,
+            principal,
+            record.upload_authorization_action or f"{record.owner_product}.object.upload",
+            product=record.owner_product,
+            resource_type="object",
+            resource_id=str(record.id),
+            study_id=record.study_id,
+        )
+        if record.status != ObjectStatus.pending or not record.multipart_upload_id:
+            raise Problem(409, "invalid_object_state", "The upload cannot be resumed")
+        upload_expires_at = record.upload_expires_at
+        if upload_expires_at is not None and upload_expires_at.tzinfo is None:
+            upload_expires_at = upload_expires_at.replace(tzinfo=UTC)
+        if upload_expires_at is None or utc_now() >= upload_expires_at:
+            self._storage.abort_multipart(record.object_key, record.multipart_upload_id)
+            self._persist_rejection(session, record)
+            raise Problem(410, "upload_expired", "The upload session has expired")
+        return UploadSessionResponse(
+            object_id=record.id,
+            upload_id=record.multipart_upload_id,
+            expires_at=upload_expires_at,
+            parts=[
+                UploadPart(
+                    part_number=part,
+                    url=self._storage.presign_upload_part(
+                        record.object_key, record.multipart_upload_id, part
+                    ),
+                )
+                for part in range(1, (record.expected_part_count or 0) + 1)
+            ],
+        )
+
+    def abort(self, session: Session, object_id: UUID, principal: Principal) -> None:
+        record = self._get(session, object_id)
+        self._authorization.require(
+            session,
+            principal,
+            record.upload_authorization_action or f"{record.owner_product}.object.upload",
+            product=record.owner_product,
+            resource_type="object",
+            resource_id=str(record.id),
+            study_id=record.study_id,
+        )
+        if record.status == ObjectStatus.pending and record.multipart_upload_id:
+            self._storage.abort_multipart(record.object_key, record.multipart_upload_id)
+            record.multipart_upload_id = None
+            record.status = ObjectStatus.rejected
+
     @staticmethod
     def _persist_rejection(session: Session, record: StoredObject) -> None:
         """Persist terminal rejection before the HTTP error rolls back its request scope."""
@@ -1666,6 +1725,13 @@ class ObjectService:
             )
         )
         if repository_versions:
+            return False
+        preview_profiles = session.scalar(
+            select(func.count(RepositoryVersionProfile.version_id)).where(
+                RepositoryVersionProfile.preview_object_id == object_id
+            )
+        )
+        if preview_profiles:
             return False
         if record.status != ObjectStatus.deleted:
             self._storage.delete(record.object_key)

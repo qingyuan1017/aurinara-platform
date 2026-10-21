@@ -270,9 +270,7 @@ class UploadSessionCreate(BaseModel):
 
     study_id: UUID
     owner_product: str = Field(min_length=1, max_length=64)
-    authorization_action: str | None = Field(
-        default=None, pattern=r"^[a-z][a-z0-9_.:-]{2,159}$"
-    )
+    authorization_action: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.:-]{2,159}$")
     classification: str = Field(min_length=1, max_length=64)
     media_type: str = Field(min_length=1, max_length=255)
     expected_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -325,18 +323,14 @@ class ObjectResponse(BaseModel):
 class ObjectDownloadAuthorize(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    authorization_action: str | None = Field(
-        default=None, pattern=r"^[a-z][a-z0-9_.:-]{2,159}$"
-    )
+    authorization_action: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.:-]{2,159}$")
 
 
 class ObjectReferenceCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     product: str = Field(min_length=1, max_length=64)
-    authorization_action: str | None = Field(
-        default=None, pattern=r"^[a-z][a-z0-9_.:-]{2,159}$"
-    )
+    authorization_action: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.:-]{2,159}$")
     external_reference: str = Field(min_length=1, max_length=255)
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=255)
     repository: "RepositoryPublication | None" = None
@@ -434,6 +428,31 @@ class RepositoryVersionCreate(BaseModel):
     source_id: str = Field(min_length=1, max_length=255)
     source_status: str = Field(min_length=1, max_length=64)
     provenance: dict[str, object] = Field(default_factory=dict)
+    derived_from_version_id: UUID | None = None
+
+
+class RepositoryCapabilities(BaseModel):
+    can_preview: bool = False
+    can_edit: bool = False
+    can_annotate: bool = False
+    can_manage: bool = False
+    conversion_targets: list[Literal["csv", "parquet"]] = Field(default_factory=list)
+
+
+class RepositoryCollectionCapabilities(BaseModel):
+    can_upload: bool = False
+    can_create_folder: bool = False
+
+
+class RepositoryVersionProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    file_kind: str
+    detected_media_type: str
+    processing_status: Literal["pending", "ready", "failed", "unsupported"]
+    metadata_json: dict[str, object]
+    analyzer_version: str
+    failure_code: str | None
 
 
 class RepositoryNodeResponse(BaseModel):
@@ -462,11 +481,16 @@ class RepositoryNodeResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None
+    current_version: "RepositoryVersionResponse | None" = None
+    capabilities: RepositoryCapabilities = Field(default_factory=RepositoryCapabilities)
 
 
 class RepositoryNodePage(BaseModel):
     items: list[RepositoryNodeResponse]
     next_cursor: str | None = None
+    capabilities: RepositoryCollectionCapabilities = Field(
+        default_factory=RepositoryCollectionCapabilities
+    )
 
 
 class RepositoryVersionResponse(BaseModel):
@@ -480,6 +504,9 @@ class RepositoryVersionResponse(BaseModel):
     sha256: str
     size_bytes: int
     media_type: str
+    derived_from_version_id: UUID | None = None
+    profile: RepositoryVersionProfileResponse | None = None
+    capabilities: RepositoryCapabilities = Field(default_factory=RepositoryCapabilities)
     created_by: UUID
     created_at: datetime
 
@@ -491,3 +518,171 @@ class RepositoryVersionBindingResponse(RepositoryVersionResponse):
     source_product: str
     source_status: str
     site_id: UUID | None
+
+
+class RepositoryUploadCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(gt=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    media_type: str = Field(min_length=1, max_length=255)
+    part_count: int = Field(ge=1, le=10_000)
+    parent_id: UUID | None = None
+    replacement_node_id: UUID | None = None
+    classification: str = Field(default="internal", min_length=1, max_length=64)
+    idempotency_key: str = Field(min_length=8, max_length=255)
+
+    @model_validator(mode="after")
+    def destination_is_unambiguous(self) -> "RepositoryUploadCreate":
+        if self.parent_id is not None and self.replacement_node_id is not None:
+            raise ValueError("parent_id and replacement_node_id are mutually exclusive")
+        return self
+
+
+class RepositoryUploadComplete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parts: list[CompletedPart] = Field(default_factory=list, max_length=10_000)
+
+
+class RepositoryUploadResponse(UploadSessionResponse):
+    filename: str
+    replacement_node_id: UUID | None = None
+    already_available: bool = False
+
+
+class TabularFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    column: str = Field(min_length=1, max_length=255)
+    operator: Literal["eq", "ne", "lt", "lte", "gt", "gte", "contains", "is_null"]
+    value: str | int | float | bool | None = None
+
+
+class TabularSort(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    column: str = Field(min_length=1, max_length=255)
+    direction: Literal["asc", "desc"] = "asc"
+
+
+class CsvParsingOverride(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delimiter: Literal[",", ";", "\t", "|"] | None = None
+    encoding: Literal["utf-8", "utf-8-sig", "windows-1252"] | None = None
+    has_header: bool | None = None
+
+
+class TabularPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=100, ge=1, le=500)
+    columns: list[str] = Field(default_factory=list, max_length=100)
+    filters: list[TabularFilter] = Field(default_factory=list, max_length=10)
+    sort: list[TabularSort] = Field(default_factory=list, max_length=3)
+    csv: CsvParsingOverride | None = None
+
+
+class TabularColumn(BaseModel):
+    name: str
+    type: str
+
+
+class TabularPreviewResponse(BaseModel):
+    processing_status: str
+    schema_: list[TabularColumn] = Field(alias="schema", serialization_alias="schema")
+    rows: list[dict[str, object | None]]
+    total_rows: int
+    page: int
+    page_size: int
+    parsing: dict[str, object]
+
+
+class RepositoryConversionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["csv", "parquet"]
+    filename: str = Field(min_length=1, max_length=255)
+    idempotency_key: str = Field(min_length=8, max_length=255)
+
+
+class RepositoryExportCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(min_length=1, max_length=255)
+    idempotency_key: str = Field(min_length=8, max_length=255)
+
+
+class RepositoryJobResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    job_type: str
+    version_id: UUID
+    state: str
+    attempts: int
+    result: dict[str, object]
+    failure_code: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class PdfAnnotationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page_number: int = Field(ge=1)
+    geometry: dict[str, object]
+    selected_text: str | None = Field(default=None, max_length=20_000)
+    comment: str | None = Field(default=None, max_length=20_000)
+    category: str = Field(default="comment", min_length=1, max_length=64)
+    status: str = Field(default="open", min_length=1, max_length=32)
+
+
+class PdfAnnotationPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    geometry: dict[str, object] | None = None
+    selected_text: str | None = Field(default=None, max_length=20_000)
+    comment: str | None = Field(default=None, max_length=20_000)
+    category: str | None = Field(default=None, min_length=1, max_length=64)
+    status: str | None = Field(default=None, min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def contains_change(self) -> "PdfAnnotationPatch":
+        if not self.model_fields_set:
+            raise ValueError("At least one annotation field must be changed")
+        return self
+
+
+class PdfAnnotationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    version_id: UUID
+    page_number: int
+    geometry: dict[str, object]
+    selected_text: str | None
+    comment: str | None
+    category: str
+    status: str
+    revision: int
+    created_by: UUID
+    updated_by: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class OfficeSessionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["view", "edit"] = "view"
+
+
+class OfficeSessionResponse(BaseModel):
+    session_id: UUID
+    document_server_url: str
+    config: dict[str, object]

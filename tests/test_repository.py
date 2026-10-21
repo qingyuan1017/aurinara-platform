@@ -108,28 +108,55 @@ def _seed_repository(factory: sessionmaker[Session]) -> tuple[Study, StoredObjec
                 allowed_scope_levels=["system", "study"],
             ),
         ]
-        session.add_all(
-            [object_record, admin_role, viewer_role, PolicyState(id=1)] + permissions
-        )
+        session.add_all([object_record, admin_role, viewer_role, PolicyState(id=1)] + permissions)
         session.flush()
         for permission in permissions:
             session.add(RolePermission(role_id=admin_role.id, permission_code=permission.code))
         session.add(
-            RolePermission(
-                role_id=viewer_role.id, permission_code="platform.repository.read"
-            )
+            RolePermission(role_id=viewer_role.id, permission_code="platform.repository.read")
         )
         session.add_all(
             [
-                RoleAssignment(
-                    user_id=admin.id, role_id=admin_role.id, assigned_by=admin.id
-                ),
-                RoleAssignment(
-                    user_id=viewer.id, role_id=viewer_role.id, assigned_by=admin.id
-                ),
+                RoleAssignment(user_id=admin.id, role_id=admin_role.id, assigned_by=admin.id),
+                RoleAssignment(user_id=viewer.id, role_id=viewer_role.id, assigned_by=admin.id),
             ]
         )
     return study, object_record
+
+
+def test_repository_upload_start_is_idempotent_and_reissues_part_urls(session_factory) -> None:
+    study, _ = _seed_repository(session_factory)
+    app = create_app(
+        Settings(environment="test"),
+        session_factory=session_factory,
+        token_verifier=RepositoryVerifier(),
+        object_storage=RepositoryStorage(),
+    )
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer admin-token"}
+    command = {
+        "filename": "source.csv",
+        "size_bytes": 12,
+        "sha256": "c" * 64,
+        "media_type": "text/csv",
+        "part_count": 1,
+        "parent_id": None,
+        "replacement_node_id": None,
+        "classification": "internal",
+        "idempotency_key": "upload-source-csv",
+    }
+
+    started = client.post(
+        f"/v1/studies/{study.id}/repository/uploads", headers=headers, json=command
+    )
+    retried = client.post(
+        f"/v1/studies/{study.id}/repository/uploads", headers=headers, json=command
+    )
+
+    assert started.status_code == 201
+    assert retried.status_code == 201
+    assert retried.json()["object_id"] == started.json()["object_id"]
+    assert retried.json()["parts"] == [{"part_number": 1, "url": "https://upload.test"}]
 
 
 def test_publication_is_atomic_filtered_and_downloads_by_envelope(session_factory) -> None:
@@ -193,9 +220,7 @@ def test_publication_is_atomic_filtered_and_downloads_by_envelope(session_factor
 
     browse = client.get(f"/v1/studies/{study.id}/repository?view=all", headers=admin_headers)
     assert browse.status_code == 200
-    assert [item["display_name"] for item in browse.json()["items"]] == [
-        "validation-report.pdf"
-    ]
+    assert [item["display_name"] for item in browse.json()["items"]] == ["validation-report.pdf"]
     node = browse.json()["items"][0]
 
     hidden = client.get(
@@ -203,11 +228,13 @@ def test_publication_is_atomic_filtered_and_downloads_by_envelope(session_factor
         headers={"Authorization": "Bearer viewer-token"},
     )
     assert hidden.status_code == 200
-    assert hidden.json() == {"items": [], "next_cursor": None}
+    assert hidden.json() == {
+        "items": [],
+        "next_cursor": None,
+        "capabilities": {"can_upload": False, "can_create_folder": False},
+    }
 
-    versions = client.get(
-        f"/v1/repository/nodes/{node['id']}/versions", headers=admin_headers
-    )
+    versions = client.get(f"/v1/repository/nodes/{node['id']}/versions", headers=admin_headers)
     assert versions.status_code == 200
     assert len(versions.json()) == 1
     download = client.post(
@@ -238,10 +265,13 @@ def test_publication_is_atomic_filtered_and_downloads_by_envelope(session_factor
     )
     assert rejected.status_code == 200
     browse = client.get(f"/v1/studies/{study.id}/repository?view=all", headers=admin_headers)
-    assert browse.json() == {"items": [], "next_cursor": None}
+    assert browse.json() == {
+        "items": [],
+        "next_cursor": None,
+        "capabilities": {"can_upload": True, "can_create_folder": True},
+    }
     assert (
-        client.get(f"/v1/repository/nodes/{node['id']}", headers=admin_headers).status_code
-        == 404
+        client.get(f"/v1/repository/nodes/{node['id']}", headers=admin_headers).status_code == 404
     )
 
 
@@ -320,9 +350,7 @@ def test_publication_builds_study_module_solution_purpose_hierarchy(session_fact
     )
     assert second_response.status_code == 201
 
-    root = client.get(
-        f"/v1/studies/{study.id}/repository?view=folder", headers=headers
-    )
+    root = client.get(f"/v1/studies/{study.id}/repository?view=folder", headers=headers)
     assert root.status_code == 200
     assert [item["display_name"] for item in root.json()["items"]] == [
         f"{study.code} · {study.display_name}"
@@ -331,7 +359,11 @@ def test_publication_builds_study_module_solution_purpose_hierarchy(session_fact
         f"/v1/studies/{study.id}/repository?view=folder",
         headers={"Authorization": "Bearer viewer-token"},
     )
-    assert hidden_root.json() == {"items": [], "next_cursor": None}
+    assert hidden_root.json() == {
+        "items": [],
+        "next_cursor": None,
+        "capabilities": {"can_upload": False, "can_create_folder": False},
+    }
     managed = client.patch(
         f"/v1/repository/nodes/{root.json()['items'][0]['id']}",
         headers={**headers, "If-Match": '"1"'},

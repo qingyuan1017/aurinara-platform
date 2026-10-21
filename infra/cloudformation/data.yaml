@@ -5,6 +5,7 @@ Parameters:
   Environment: {Type: String, AllowedValues: [staging, production]}
   DataSubnetIds: {Type: List<AWS::EC2::Subnet::Id>}
   DatabaseSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
+  EfsSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
   DatabaseInstanceClass: {Type: String}
   BrowserOrigins: {Type: String}
   DeploymentProfile: {Type: String, AllowedValues: [standard, budget], Default: standard}
@@ -39,6 +40,7 @@ Resources:
             Action: [kms:Encrypt, kms:Decrypt, kms:ReEncrypt*, kms:GenerateDataKey*, kms:DescribeKey]
             Resource: '*'
             Condition: {ArnLike: {'kms:EncryptionContext:aws:logs:arn': !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'}}
+
           - Sid: CloudTrail
             Effect: Allow
             Principal: {Service: cloudtrail.amazonaws.com}
@@ -56,6 +58,72 @@ Resources:
   DataKeyAlias:
     Type: AWS::KMS::Alias
     Properties: {AliasName: !Sub 'alias/aurinara-platform-${Environment}', TargetKeyId: !Ref DataKey}
+
+  OnlyOfficeJwtSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub aurinara-platform/${Environment}/onlyoffice-jwt
+      Description: JWT signing secret shared by Platform and ONLYOFFICE
+      GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
+      KmsKeyId: !Ref DataKey
+
+  OnlyOfficeFileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      KmsKeyId: !Ref DataKey
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      LifecyclePolicies: [{TransitionToIA: AFTER_30_DAYS}]
+      FileSystemTags: [{Key: Name, Value: !Sub 'aurinara-platform-${Environment}-onlyoffice'}]
+  OnlyOfficeMountA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref OnlyOfficeFileSystem
+      SubnetId: !Select [0, !Ref DataSubnetIds]
+      SecurityGroups: [!Ref EfsSecurityGroupId]
+  OnlyOfficeMountB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref OnlyOfficeFileSystem
+      SubnetId: !Select [1, !Ref DataSubnetIds]
+      SecurityGroups: [!Ref EfsSecurityGroupId]
+  OnlyOfficeDataAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref OnlyOfficeFileSystem
+      PosixUser: {Uid: '1000', Gid: '1000'}
+      RootDirectory:
+        Path: /data
+        CreationInfo: {OwnerUid: '1000', OwnerGid: '1000', Permissions: '0770'}
+  OnlyOfficeLibAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref OnlyOfficeFileSystem
+      PosixUser: {Uid: '1000', Gid: '1000'}
+      RootDirectory:
+        Path: /lib
+        CreationInfo: {OwnerUid: '1000', OwnerGid: '1000', Permissions: '0770'}
+  OnlyOfficeDatabaseAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref OnlyOfficeFileSystem
+      PosixUser: {Uid: '1000', Gid: '1000'}
+      RootDirectory:
+        Path: /database
+        CreationInfo: {OwnerUid: '1000', OwnerGid: '1000', Permissions: '0770'}
+  OnlyOfficeLogsAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref OnlyOfficeFileSystem
+      PosixUser: {Uid: '1000', Gid: '1000'}
+      RootDirectory:
+        Path: /logs
+        CreationInfo: {OwnerUid: '1000', OwnerGid: '1000', Permissions: '0770'}
 
   DatabaseSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
@@ -148,7 +216,7 @@ Resources:
           - AllowedOrigins: !Split [',', !Ref BrowserOrigins]
             AllowedMethods: [GET, PUT, POST, HEAD]
             AllowedHeaders: ['*']
-            ExposedHeaders: [ETag, x-amz-checksum-sha256]
+            ExposedHeaders: [Accept-Ranges, Content-Length, Content-Range, ETag, x-amz-checksum-sha256]
             MaxAge: 300
       LifecycleConfiguration:
         Rules:
@@ -231,7 +299,7 @@ Resources:
       BackupSelection:
         SelectionName: objects
         IamRoleArn: !GetAtt BackupRole.Arn
-        Resources: [!GetAtt ObjectBucket.Arn]
+        Resources: [!GetAtt ObjectBucket.Arn, !GetAtt OnlyOfficeFileSystem.Arn]
 
 Outputs:
   DataKeyArn: {Value: !GetAtt DataKey.Arn}
@@ -246,3 +314,9 @@ Outputs:
   EventBusName: {Value: !Ref EventBus}
   EventBusArn: {Value: !GetAtt EventBus.Arn}
   BackupVaultName: {Value: !Ref BackupVault}
+  OnlyOfficeJwtSecretArn: {Value: !Ref OnlyOfficeJwtSecret}
+  OnlyOfficeFileSystemId: {Value: !Ref OnlyOfficeFileSystem}
+  OnlyOfficeDataAccessPointId: {Value: !Ref OnlyOfficeDataAccessPoint}
+  OnlyOfficeLibAccessPointId: {Value: !Ref OnlyOfficeLibAccessPoint}
+  OnlyOfficeDatabaseAccessPointId: {Value: !Ref OnlyOfficeDatabaseAccessPoint}
+  OnlyOfficeLogsAccessPointId: {Value: !Ref OnlyOfficeLogsAccessPoint}
