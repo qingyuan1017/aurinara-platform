@@ -77,8 +77,8 @@ Resources:
         BrowserOrigins: !Sub
           - 'https://${Platform}.${BaseDomain},https://${Aurinara}.${BaseDomain},https://${Edc}.${BaseDomain}'
           - Platform: !If [IsProduction, platform, platform-staging]
-            Aurinara: !If [IsProduction, production, staging]
-            Edc: !If [IsProduction, edc, edc-staging]
+            Aurinara: !If [IsProduction, nara, staging]
+            Edc: !If [IsProduction, auri, edc-staging]
   Identity:
     Type: AWS::CloudFormation::Stack
     Properties:
@@ -91,10 +91,10 @@ Resources:
           - Host: !If [IsProduction, platform, platform-staging]
         AurinaraApplicationUrl: !Sub
           - 'https://${Host}.${BaseDomain}'
-          - Host: !If [IsProduction, production, staging]
+          - Host: !If [IsProduction, nara, staging]
         EdcApplicationUrl: !Sub
           - 'https://${Host}.${BaseDomain}'
-          - Host: !If [IsProduction, edc, edc-staging]
+          - Host: !If [IsProduction, auri, edc-staging]
         DataKeyArn: !GetAtt Data.Outputs.DataKeyArn
         SesSourceArn: !Ref SesSourceArn
         CognitoFromAddress: !Ref CognitoFromAddress
@@ -131,8 +131,8 @@ Resources:
         BrowserOrigins: !Sub
           - 'https://${Platform}.${BaseDomain},https://${Aurinara}.${BaseDomain},https://${Edc}.${BaseDomain}'
           - Platform: !If [IsProduction, platform, platform-staging]
-            Aurinara: !If [IsProduction, production, staging]
-            Edc: !If [IsProduction, edc, edc-staging]
+            Aurinara: !If [IsProduction, nara, staging]
+            Edc: !If [IsProduction, auri, edc-staging]
         MalwareScannerUrl: !Ref MalwareScannerUrl
         MalwareScannerTokenSecretArn: !If
           - HasMalwareScanner

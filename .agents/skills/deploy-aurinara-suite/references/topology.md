@@ -7,8 +7,8 @@ Use this as a discovery baseline, not a substitute for current repository files 
 | Product | Expected GitHub repository | Default branch | Production stack | Production URL | Health endpoint |
 | --- | --- | --- | --- | --- | --- |
 | Platform | `qingyuan1017/aurinara-platform` | `main` | `aurinara-platform-production` | `https://platform.aurinara.com` | `/health/live` |
-| Aurinara | `qingyuan1017/aurinara-program` | `master` | `aurinara-production` | `https://production.aurinara.com` | `/health/ready` |
-| EDC | `qingyuan1017/aurinara-edc` | `main` | `aurinara-edc-production` | `https://edc.aurinara.com` | `/api/v1/health/ready` |
+| Aurinara | `qingyuan1017/aurinara-program` | `master` | `aurinara-production` | `https://nara.aurinara.com` | `/health/ready` |
+| EDC | `qingyuan1017/aurinara-edc` | `main` | `aurinara-edc-production` | `https://auri.aurinara.com` | `/api/v1/health/ready` |
 
 Staging stack names add `-staging` in place of `-production`. Staging URLs are `platform-staging.aurinara.com`, `staging.aurinara.com`, and `edc-staging.aurinara.com` unless the current workflow's `BASE_DOMAIN` overrides them.
 
