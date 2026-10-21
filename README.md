@@ -57,19 +57,12 @@ the idempotent Platform identity and normal user event. Every AWS migration task
 reconciles all confirmed, enabled users already present in the environment's user pool,
 so users created before the trigger was installed are backfilled safely. Registration
 does not expose existing studies or grant product-wide access. Creating a canonical
-study atomically assigns its creator the reviewed study-owner roles synchronized by
-Aurinara and EDC; other access remains managed through **Product access** and
-**Memberships**.
+study atomically assigns its creator the Platform-owned **Study Administrator** role.
+That role covers every registered study/site permission in the new study; products do
+not create or synchronize roles.
 
-After the first development administrator has signed in, grant that administrator
-the local product roles used to exercise the cross-product runtime:
-
-```powershell
-python scripts/bootstrap_local_product_access.py
-```
-
-This command is rejected outside `ENVIRONMENT=development`. Production assignments must
-continue to come from reviewed migration snapshots or explicit administrative actions.
+The initial administrator receives the built-in **System Administrator** role, so no
+additional product-role bootstrap is required in development or production.
 
 The API is under `/v1`; OpenAPI is at `/v1/openapi.json`. Local browser authentication uses
 the production user pool with separate localhost-only development app clients, so it follows
@@ -134,20 +127,21 @@ namespaced permissions, and scoped assignments. Existing UUIDs are preserved. An
 OIDC subject, or study-code conflict aborts the transaction; the importer never guesses a
 match. Re-running an identical snapshot is idempotent.
 
-EDC registers its product-owned permission vocabulary through
-`PUT /v1/products/aurinara-edc/permissions`. Platform owns role names, scopes, status, and
-permission composition. Administrators configure those roles in **Roles & permissions**;
+EDC and Aurinara register only their product-owned permission vocabularies through
+`PUT /v1/products/{product}/permissions`. Platform owns role keys, names, scopes, status,
+policies, and explicit permission composition. Administrators configure custom roles in
+**Roles & permissions**;
 every change requires a reason, advances the policy version, and emits a role projection
-event. System-scoped roles are assigned in Product Access, while study- and site-scoped
-roles are assigned in Memberships. The former product role-sync endpoint now rejects
-writes so a product deployment cannot overwrite centrally reviewed policy.
+event. Built-in System Administrator, Study Administrator, and Study Viewer roles are
+available without configuration and are release-managed. The product role-sync endpoint
+does not exist.
 CTMS-created Sites are registered under the matching canonical Study through the EDC
-service account. Memberships list those active Sites by name and persist their stable UUID.
+service account. Access management lists those active Sites by name and persists their stable UUID.
 
 Product API service accounts are normal registered OIDC identities. Grant them
-`platform.authorization.decide` and only their product's `*.object.upload`,
-`*.object.download`, and `*.object.reference` permissions. The EDC service account also
-requires `edc.permission.sync`, `edc.role.sync`, and `edc.site.sync`. End-user tokens are
+`platform.authorization.decide` and only their product's object permissions. Aurinara
+uses `aurinara.artifacts.read`, `aurinara.artifacts.write`, and
+`aurinara.permission.sync`; EDC uses `edc.permission.sync` and `edc.site.sync`. End-user tokens are
 never exchanged for bucket credentials.
 
 Run `python scripts/publish_outbox.py --watch` from a supervised worker. The local

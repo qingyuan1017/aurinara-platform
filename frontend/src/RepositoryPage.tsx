@@ -1,7 +1,7 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, Clock3, Download, File, Folder, FolderInput, History, MoreHorizontal, Plus, RefreshCw, RotateCcw, Search, Upload } from 'lucide-react'
 import { api, ApiError, uploadNeutralFile } from './api'
-import type { RepositoryNode, RepositoryVersion, Study } from './types'
+import type { RepositoryNode, RepositoryVersion, Site, Study } from './types'
 
 type Notify = (kind: 'ok' | 'error', text: string) => void
 type View = 'folder' | 'all' | 'recent' | 'aurinara' | 'aurinara-edc' | 'platform' | 'archived'
@@ -23,6 +23,7 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
   const [query, setQuery] = useState('')
   const [items, setItems] = useState<RepositoryNode[]>([])
   const [folders, setFolders] = useState<RepositoryNode[]>([])
+  const [sites, setSites] = useState<Site[]>([])
   const [path, setPath] = useState<RepositoryNode[]>([])
   const [selected, setSelected] = useState<RepositoryNode | null>(null)
   const [versions, setVersions] = useState<RepositoryVersion[]>([])
@@ -38,12 +39,14 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
       const params = new URLSearchParams({ view, limit: '100' })
       if (view === 'folder' && currentFolder) params.set('parent_id', currentFolder.id)
       if (query.trim()) params.set('q', query.trim())
-      const [page, folderPage] = await Promise.all([
+      const [page, folderPage, studySites] = await Promise.all([
         api.repository(studyId, params),
         api.repository(studyId, new URLSearchParams({ view: 'all', limit: '100' })),
+        api.sites(studyId),
       ])
       setItems(page.items)
       setFolders(folderPage.items.filter((item) => item.kind === 'folder' && item.lifecycle_status === 'active'))
+      setSites(studySites)
       setSelected((value) => page.items.find((item) => item.id === value?.id) || null)
     } catch (error) { notify('error', message(error)) }
     finally { setLoading(false) }
@@ -59,6 +62,7 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
     folder.id !== selected.id && folder.source_product === selected.source_product &&
     folder.required_read_action === selected.required_read_action &&
     folder.required_write_action === selected.required_write_action && folder.site_id === selected.site_id), [folders, selected])
+  const siteNames = useMemo(() => new Map(sites.map((site) => [site.id, site.name])), [sites])
 
   const openFolder = (folder: RepositoryNode) => { setPath([...path, folder]); setView('folder'); setQuery(''); setSelected(null) }
   const createFolder = async () => {
@@ -131,7 +135,8 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
         <header><span className="repo-detail-icon">{selected.kind === 'folder' ? <Folder /> : <File />}</span><div><h2>{selected.display_name}</h2><p>{selected.source_product} · {selected.classification}</p></div><MoreHorizontal /></header>
         <div className="repo-actions"><button className="secondary" onClick={() => void rename()}>Rename</button>{selected.kind === 'file' && <button className="primary" onClick={() => void download()}><Download />Download</button>}<button className="secondary" onClick={() => void archive()}>{selected.lifecycle_status === 'archived' ? <><RotateCcw />Restore</> : <><Archive />Archive</>}</button></div>
         {selected.lifecycle_status === 'active' && <label className="field"><span>Move to equivalent-scope folder</span><select value={selected.parent_id || ''} onChange={(event) => void move(event.target.value)}><option value="">Repository root</option>{scopedDestinations.map((folder) => <option key={folder.id} value={folder.id}>{folder.display_name}</option>)}</select></label>}
-        <dl><dt>Type</dt><dd>{selected.source_resource_type}</dd><dt>Module</dt><dd>{selected.module || '—'}</dd><dt>Scope</dt><dd>{selected.site_id ? `Site ${selected.site_id}` : 'Study'}</dd><dt>Read permission</dt><dd className="mono">{selected.required_read_action}</dd><dt>Resource ID</dt><dd className="mono">{selected.source_resource_id || '—'}</dd></dl>
+        <dl><dt>Type</dt><dd>{selected.source_resource_type.replaceAll('_', ' ')}</dd><dt>Module</dt><dd>{selected.module || '—'}</dd><dt>Scope</dt><dd>{selected.site_id ? siteNames.get(selected.site_id) || 'Unavailable site' : 'Study-wide'}</dd></dl>
+        <details className="technical-details"><summary>Technical details</summary><dl><dt>Read permission</dt><dd className="mono">{selected.required_read_action}</dd><dt>Internal reference</dt><dd className="mono">{selected.source_resource_id || '—'}</dd></dl></details>
         {selected.kind === 'file' && <section className="version-list"><h3><History />Version history</h3>{selected.source_product === 'platform' && selected.lifecycle_status === 'active' && <label className="replace-button"><Upload />Replace<input hidden type="file" onChange={(event) => void upload(event, selected)} /></label>}{versions.map((version) => <button key={version.id} onClick={() => void download(version)}><span>v{version.version_number}</span><small>{new Date(version.created_at).toLocaleString()} · {(version.size_bytes / 1024).toFixed(1)} KB</small><Download /></button>)}</section>}
       </> : <div className="empty"><FolderInput /><span>Select an entry to see details and versions.</span></div>}</aside>
     </div>

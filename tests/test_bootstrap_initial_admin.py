@@ -4,30 +4,17 @@ from sqlalchemy.orm import Session
 
 from aurinara_platform.models import (
     OutboxEvent,
+    Permission,
     PolicyState,
     Role,
     RoleAssignment,
     User,
 )
-from scripts.bootstrap_initial_admin import (
-    EDC_SYSTEM_ADMIN_ROLE_ID,
-    PLATFORM_ADMIN_PERMISSIONS,
-    bootstrap_initial_administrator,
-)
+from scripts.bootstrap_initial_admin import bootstrap_initial_administrator
 
 
 def test_bootstrap_initial_administrator_is_explicit_and_idempotent(session: Session) -> None:
-    session.add_all(
-        [
-            PolicyState(id=1, version=1),
-            Role(
-                id=EDC_SYSTEM_ADMIN_ROLE_ID,
-                product="aurinara-edc",
-                name="EDC System Administrator",
-                scope_level="system",
-            ),
-        ]
-    )
+    session.add(PolicyState(id=1, version=1))
     session.commit()
 
     command = {
@@ -53,13 +40,20 @@ def test_bootstrap_initial_administrator_is_explicit_and_idempotent(session: Ses
         )
     )
     assert {(role.product, role.name) for role in roles} == {
-        ("platform", "Platform Administrator"),
-        ("aurinara-edc", "EDC System Administrator"),
+        ("platform", "System Administrator")
     }
     platform_role = next(role for role in roles if role.product == "platform")
-    assert set(platform_role.permission_codes) == set(PLATFORM_ADMIN_PERMISSIONS)
-    assert session.scalar(select(func.count()).select_from(OutboxEvent)) == 1
-    event = session.scalar(select(OutboxEvent))
+    assert platform_role.permission_policy == "all"
+    platform_permission_codes = set(
+        session.scalars(select(Permission.code).where(Permission.product == "platform"))
+    )
+    assert set(platform_role.permission_codes) == platform_permission_codes
+    assert session.scalar(select(func.count()).select_from(OutboxEvent)) == 2
+    event = session.scalar(
+        select(OutboxEvent).where(
+            OutboxEvent.event_type == "platform.assignment.changed.v1"
+        )
+    )
     assert event is not None
     assert event.event_type == "platform.assignment.changed.v1"
     assert event.payload["subject"] == "immutable-subject"
@@ -69,12 +63,6 @@ def test_bootstrap_refuses_a_second_human_identity(session: Session) -> None:
     session.add_all(
         [
             PolicyState(id=1, version=1),
-            Role(
-                id=EDC_SYSTEM_ADMIN_ROLE_ID,
-                product="aurinara-edc",
-                name="EDC System Administrator",
-                scope_level="system",
-            ),
             User(
                 issuer="https://issuer.example",
                 subject="existing-subject",

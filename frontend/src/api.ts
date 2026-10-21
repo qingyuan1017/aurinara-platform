@@ -45,7 +45,7 @@ export const api = {
   users: () => request<User[]>('/v1/users'),
   roles: (product?: string) => request<Role[]>(`/v1/roles${product ? `?product=${encodeURIComponent(product)}` : ''}`),
   permissions: (product: string) => request<Permission[]>(`/v1/permissions?product=${encodeURIComponent(product)}`),
-  createRole: (product: string, body: { name: string; description?: string; scope_level: string; permission_codes: string[]; reason: string }) =>
+  createRole: (product: string, body: { key: string; name: string; description?: string; scope_level: string; permission_codes: string[]; reason: string }) =>
     request<Role>(`/v1/products/${encodeURIComponent(product)}/roles`, { method: 'POST', body: JSON.stringify(body) }),
   patchRole: (roleId: string, revision: number, body: { name?: string; description?: string | null; scope_level?: string; permission_codes?: string[]; status?: string; reason: string }) =>
     request<Role>(`/v1/roles/${roleId}`, { method: 'PATCH', headers: { 'If-Match': `"${revision}"` }, body: JSON.stringify(body) }),

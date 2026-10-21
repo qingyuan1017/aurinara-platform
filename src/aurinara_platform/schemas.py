@@ -41,11 +41,14 @@ class RoleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    key: str
     product: str
     name: str
     description: str | None
     scope_level: Literal["system", "study", "site"]
     assignable: bool
+    built_in: bool
+    permission_policy: Literal["explicit", "all", "all_scoped", "read_scoped"]
     status: Literal["active", "inactive"]
     source_role_id: UUID | None
     revision: int
@@ -82,6 +85,7 @@ class ProductPermissionSync(BaseModel):
 class PlatformRoleCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    key: str = Field(pattern=r"^[a-z][a-z0-9_.-]{2,159}$")
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=2000)
     scope_level: Literal["system", "study", "site"]
@@ -118,22 +122,6 @@ class RoleChangeResponse(BaseModel):
     new_value: dict[str, object]
     policy_version: int
     created_at: datetime
-
-
-class ProductRoleDefinition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    source_role_id: UUID
-    name: str = Field(min_length=1, max_length=100)
-    description: str | None = Field(default=None, max_length=2000)
-    scope_level: Literal["system", "study", "site"]
-    permissions: list[str] = Field(min_length=1)
-
-
-class ProductRoleSync(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    roles: list[ProductRoleDefinition] = Field(min_length=1, max_length=250)
 
 
 class SystemAssignmentReplace(BaseModel):
