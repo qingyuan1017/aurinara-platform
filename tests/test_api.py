@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from aurinara_platform.auth import InvalidTokenError, Principal
 from aurinara_platform.config import Settings
 from aurinara_platform.default_access import (
-    AURINARA_STUDY_OWNER_ROLE_NAME,
-    EDC_STUDY_OWNER_ROLE_NAMES,
+    REGISTERED_STUDY_CREATOR_ROLE_ID,
+    SYSTEM_ADMINISTRATOR_ROLE_ID,
     ensure_platform_access_defaults,
     ensure_registered_study_creator,
 )
@@ -98,33 +98,10 @@ def _seed_admin(factory: sessionmaker[Session]) -> tuple[User, Role]:
             email="admin@example.test",
             display_name="Platform Admin",
         )
-        role = Role(product="platform", name="Platform Admin")
-        codes = (
-            "platform.user.manage",
-            "platform.study.create",
-            "platform.study.read",
-            "platform.study.manage",
-            "platform.membership.read",
-            "platform.membership.manage",
-            "platform.role.manage",
-        )
-        product_roles = [
-            Role(
-                product="aurinara",
-                name=AURINARA_STUDY_OWNER_ROLE_NAME,
-                scope_level="study",
-            ),
-            *[
-                Role(product="aurinara-edc", name=name, scope_level="study")
-                for name in EDC_STUDY_OWNER_ROLE_NAMES
-            ],
-        ]
-        session.add_all([admin, role, PolicyState(id=1, version=1), *product_roles])
+        role = session.get(Role, SYSTEM_ADMINISTRATOR_ROLE_ID)
+        assert role is not None
+        session.add_all([admin, PolicyState(id=1, version=1)])
         session.flush()
-        for code in codes:
-            if session.get(Permission, code) is None:
-                session.add(Permission(code=code, product="platform"))
-            session.add(RolePermission(role_id=role.id, permission_code=code))
         session.add(
             RoleAssignment(
                 user_id=admin.id,
@@ -194,11 +171,22 @@ def test_platform_manages_product_role_composition(session_factory) -> None:
         "edc.designer.odm.export",
         "edc.designer.odm.import",
     }
+    roles_after_sync = client.get(
+        "/v1/roles?product=aurinara-edc",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    designer = next(item for item in roles_after_sync.json() if item["key"] == "edc.designer")
+    assert designer["built_in"] is True
+    assert designer["permission_codes"] == [
+        "edc.designer.odm.export",
+        "edc.designer.odm.import",
+    ]
 
     created = client.post(
         "/v1/products/aurinara-edc/roles",
         headers={"Authorization": "Bearer admin-token"},
         json={
+            "key": "custom.odm_designer",
             "name": "ODM Designer",
             "description": "Manage ODM metadata",
             "scope_level": "study",
@@ -211,6 +199,8 @@ def test_platform_manages_product_role_composition(session_factory) -> None:
     )
     assert created.status_code == 201
     role = created.json()
+    assert role["key"] == "custom.odm_designer"
+    assert role["built_in"] is False
     assert role["source_role_id"] is None
     assert role["permission_codes"] == [
         "edc.designer.odm.export",
@@ -264,7 +254,14 @@ def test_platform_manages_product_role_composition(session_factory) -> None:
     assert changes.status_code == 200
     assert [item["action"] for item in changes.json()] == ["deactivate", "create"]
     with session_factory() as session:
-        assert len(session.scalars(select(RoleChange)).all()) == 2
+        assert (
+            len(
+                session.scalars(
+                    select(RoleChange).where(RoleChange.role_id == UUID(role["id"]))
+                ).all()
+            )
+            == 2
+        )
 
 
 def test_user_study_and_membership_lifecycle(session_factory) -> None:
@@ -392,7 +389,9 @@ def test_registered_creators_only_see_their_own_studies(session_factory) -> None
     assert final_owner.json()["error"]["code"] == "last_study_owner"
 
 
-def test_study_creation_rolls_back_until_product_owner_roles_are_ready(session_factory) -> None:
+def test_study_creation_uses_platform_study_administrator_without_product_roles(
+    session_factory,
+) -> None:
     with session_factory.begin() as session:
         ensure_platform_access_defaults(session)
         creator = User(
@@ -417,10 +416,9 @@ def test_study_creation_rolls_back_until_product_owner_roles_are_ready(session_f
         json={"code": "NOT-READY", "display_name": "Not Ready", "sponsor": "Sponsor"},
     )
 
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "study_access_not_ready"
+    assert response.status_code == 201
     with session_factory() as session:
-        assert session.scalar(select(func.count()).select_from(Study)) == 0
+        assert session.scalar(select(func.count()).select_from(Study)) == 1
 
 
 def test_platform_admin_can_manage_system_product_access(session_factory) -> None:
@@ -449,11 +447,7 @@ def test_platform_admin_can_manage_system_product_access(session_factory) -> Non
     system_admin = next(item for item in roles.json() if item["name"] == "EDC System Administrator")
     assert system_admin["id"] == str(product_role_id)
     all_roles = client.get("/v1/roles", headers=headers)
-    assert {item["product"] for item in all_roles.json()} == {
-        "platform",
-        "aurinara",
-        "aurinara-edc",
-    }
+    assert {item["product"] for item in all_roles.json()} == {"platform", "aurinara-edc"}
 
     assigned = client.put(
         f"/v1/users/{admin.id}/system-assignments",
@@ -474,7 +468,41 @@ def test_platform_admin_can_manage_system_product_access(session_factory) -> Non
     assert revoked.json() == []
 
 
-def test_product_role_catalog_sync_registers_stable_reviewed_roles(session_factory) -> None:
+def test_system_access_edit_preserves_automatic_study_creator(session_factory) -> None:
+    _seed_admin(session_factory)
+    with session_factory.begin() as session:
+        creator = User(
+            issuer="https://issuer",
+            subject="study-creator",
+            email="creator@example.test",
+        )
+        session.add(creator)
+        session.flush()
+        ensure_registered_study_creator(session, creator)
+
+    app = create_app(
+        Settings(environment="test"),
+        session_factory=session_factory,
+        token_verifier=FakeVerifier(),
+        object_storage=NullStorage(),
+    )
+    client = TestClient(app)
+    response = client.put(
+        f"/v1/users/{creator.id}/system-assignments",
+        headers={"Authorization": "Bearer admin-token"},
+        json={"product": "platform", "role_ids": []},
+    )
+    assert response.status_code == 200
+    with session_factory() as session:
+        assert session.scalar(
+            select(RoleAssignment.id).where(
+                RoleAssignment.user_id == creator.id,
+                RoleAssignment.role_id == REGISTERED_STUDY_CREATOR_ROLE_ID,
+            )
+        ) is not None
+
+
+def test_product_role_catalog_sync_is_not_exposed(session_factory) -> None:
     admin, _ = _seed_admin(session_factory)
     source_role_id = uuid4()
     with session_factory.begin() as session:
@@ -557,20 +585,7 @@ def test_product_role_catalog_sync_registers_stable_reviewed_roles(session_facto
             ]
         },
     )
-    assert response.status_code == 200
-    assert response.json()[0]["id"] == str(source_role_id)
-    assert response.json()[0]["source_role_id"] == str(source_role_id)
-    assert response.json()[0]["permission_codes"] == ["edc.study.read", "edc.user.list"]
-    with session_factory() as session:
-        adopted = session.get(Role, source_role_id)
-        assert adopted is not None
-        assert adopted.source_role_id == source_role_id
-        assert session.scalar(
-            select(RoleAssignment.id).where(
-                RoleAssignment.user_id == admin.id,
-                RoleAssignment.role_id == source_role_id,
-            )
-        )
+    assert response.status_code == 405
 
 
 def test_ctms_site_sync_populates_study_membership_options(session_factory) -> None:
@@ -668,8 +683,8 @@ def test_ctms_site_sync_populates_study_membership_options(session_factory) -> N
             "site_id": str(uuid4()),
         },
     )
-    assert rejected.status_code == 422
-    assert rejected.json()["error"]["code"] == "invalid_membership_site"
+    assert rejected.status_code == 403
+    assert rejected.json()["error"]["code"] == "authorization_denied"
 
     other_study = admin_client.post(
         "/v1/studies",
@@ -692,8 +707,8 @@ def test_ctms_site_sync_populates_study_membership_options(session_factory) -> N
             "site_id": str(other_site_id),
         },
     )
-    assert cross_study.status_code == 422
-    assert cross_study.json()["error"]["code"] == "invalid_membership_site"
+    assert cross_study.status_code == 403
+    assert cross_study.json()["error"]["code"] == "authorization_denied"
 
 
 def test_invalid_token_is_rejected(session_factory) -> None:

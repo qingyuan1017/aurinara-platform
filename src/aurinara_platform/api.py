@@ -30,7 +30,6 @@ from aurinara_platform.schemas import (
     PlatformRoleCreate,
     PlatformRolePatch,
     ProductPermissionSync,
-    ProductRoleSync,
     RoleChangeResponse,
     RoleResponse,
     SiteResponse,
@@ -437,24 +436,6 @@ def list_role_changes(
     return [
         RoleChangeResponse.model_validate(item)
         for item in service.list_role_changes(session, role_id, principal)
-    ]
-
-
-@router.put(
-    "/products/{product}/roles",
-    response_model=list[RoleResponse],
-    tags=["memberships"],
-)
-def sync_product_roles(
-    product: str,
-    command: ProductRoleSync,
-    session: Annotated[Session, Depends(get_session)],
-    principal: Annotated[Principal, Depends(get_principal)],
-    service: Annotated[MembershipService, Depends(get_memberships)],
-) -> list[RoleResponse]:
-    return [
-        RoleResponse.model_validate(item)
-        for item in service.sync_product_roles(session, product, command, principal)
     ]
 
 

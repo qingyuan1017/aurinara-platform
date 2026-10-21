@@ -60,6 +60,7 @@ describe('platform API client', () => {
     vi.stubGlobal('fetch', fetch)
     prepareBrowserGlobals()
     await api.createRole('aurinara-edc', {
+      key: 'custom.odm_designer',
       name: 'ODM Designer',
       scope_level: 'study',
       permission_codes: ['edc.designer.odm.export'],
@@ -71,6 +72,31 @@ describe('platform API client', () => {
         method: 'POST',
         body: expect.stringContaining('Create the reviewed ODM role'),
       }),
+    )
+  })
+
+  it('filters roles and permissions by the selected product', async () => {
+    const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+    prepareBrowserGlobals()
+
+    await Promise.all([
+      api.roles('aurinara-edc'),
+      api.permissions('aurinara-edc'),
+    ])
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      '/v1/roles?product=aurinara-edc',
+      expect.any(Object),
+    )
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      '/v1/permissions?product=aurinara-edc',
+      expect.any(Object),
     )
   })
 

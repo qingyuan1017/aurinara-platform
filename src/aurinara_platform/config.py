@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     )
     oidc_jwks_url: str = "http://localhost:8081/.well-known/jwks.json"
     oidc_algorithms: str = "RS256"
+    # Service clients must belong to the same pool as oidc_issuer.
     oidc_service_client_ids: str = ""
     oidc_service_scope: str = "https://aurinara-platform.local/service"
     oidc_service_audience: str | None = None

@@ -17,35 +17,14 @@ from sqlalchemy.orm import Session
 
 from aurinara_platform.config import get_settings
 from aurinara_platform.database import create_session_factory
-from aurinara_platform.models import (
-    Permission,
-    PolicyState,
-    Role,
-    RoleAssignment,
-    RolePermission,
-    User,
-    UserStatus,
-    utc_now,
+from aurinara_platform.default_access import (
+    SYSTEM_ADMINISTRATOR_ROLE_ID,
+    ensure_platform_access_defaults,
 )
-from aurinara_platform.services import _emit
+from aurinara_platform.models import PolicyState, Role, RoleAssignment, User, UserStatus, utc_now
+from aurinara_platform.services import _emit, _emit_platform_role_change
 
-EDC_SYSTEM_ADMIN_ROLE_ID = UUID("e208baf5-110f-5708-a483-d643f9719bfb")
-PLATFORM_ADMIN_ROLE_ID = uuid5(NAMESPACE_URL, "aurinara-platform:role:platform-administrator")
-PLATFORM_ADMIN_PERMISSIONS = (
-    "platform.user.manage",
-    "platform.study.create",
-    "platform.study.read",
-    "platform.study.manage",
-    "platform.membership.read",
-    "platform.membership.manage",
-    "platform.role.manage",
-    "platform.authorization.decide",
-    "platform.object.upload",
-    "platform.object.download",
-    "platform.object.reference",
-    "platform.repository.read",
-    "platform.repository.write",
-)
+PLATFORM_ADMIN_ROLE_ID = SYSTEM_ADMINISTRATOR_ROLE_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,55 +75,19 @@ def bootstrap_initial_administrator(
     elif user.status != UserStatus.active:
         raise RuntimeError("the selected administrator identity is inactive")
 
-    platform_role = session.scalar(
-        select(Role).where(Role.product == "platform", Role.name == "Platform Administrator")
-    )
-    if platform_role is None:
-        platform_role = Role(
-            id=PLATFORM_ADMIN_ROLE_ID,
-            product="platform",
-            name="Platform Administrator",
-            description="Full administration of the shared Aurinara control plane",
-            scope_level="system",
-            assignable=False,
-        )
-        session.add(platform_role)
-        session.flush()
-        changed = True
-
-    for code in PLATFORM_ADMIN_PERMISSIONS:
-        permission = session.get(Permission, code)
-        if permission is None:
-            permission = Permission(
-                code=code,
-                product="platform",
-                description="Aurinara Platform administrator permission",
-                module="platform",
-                allowed_scope_levels=["system"],
-            )
-            session.add(permission)
-            changed = True
-        if session.get(RolePermission, (platform_role.id, code)) is None:
-            session.add(RolePermission(role_id=platform_role.id, permission_code=code))
-            changed = True
-
-    edc_role = session.get(Role, EDC_SYSTEM_ADMIN_ROLE_ID)
-    if edc_role is None or edc_role.product != "aurinara-edc":
-        raise RuntimeError("the reviewed EDC System Administrator role is not installed")
-
+    changed = ensure_platform_access_defaults(session) or changed
     session.flush()
-    for role in (platform_role, edc_role):
-        assignment_id = _stable_assignment_id(user.id, role.id)
-        if session.get(RoleAssignment, assignment_id) is None:
-            session.add(
-                RoleAssignment(
-                    id=assignment_id,
-                    user_id=user.id,
-                    role_id=role.id,
-                    assigned_by=user.id,
-                )
+    assignment_id = _stable_assignment_id(user.id, SYSTEM_ADMINISTRATOR_ROLE_ID)
+    if session.get(RoleAssignment, assignment_id) is None:
+        session.add(
+            RoleAssignment(
+                id=assignment_id,
+                user_id=user.id,
+                role_id=SYSTEM_ADMINISTRATOR_ROLE_ID,
+                assigned_by=user.id,
             )
-            changed = True
+        )
+        changed = True
 
     state = session.get(PolicyState, 1)
     if state is None:
@@ -153,6 +96,10 @@ def bootstrap_initial_administrator(
         state.version += 1
         state.updated_at = utc_now()
         session.flush()
+        role = session.get(Role, SYSTEM_ADMINISTRATOR_ROLE_ID)
+        if role is None:
+            raise RuntimeError("System Administrator role is not initialized")
+        _emit_platform_role_change(session, role, state.version)
         _emit(
             session,
             "platform.assignment.changed.v1",
@@ -163,8 +110,8 @@ def bootstrap_initial_administrator(
                 "user_id": str(user.id),
                 "issuer": user.issuer,
                 "subject": user.subject,
-                "product": "aurinara-edc",
-                "role_ids": [str(edc_role.id)],
+                "product": "platform",
+                "role_ids": [str(SYSTEM_ADMINISTRATOR_ROLE_ID)],
                 "assigned_by": str(user.id),
                 "policy_version": state.version,
             },

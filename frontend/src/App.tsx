@@ -1,16 +1,20 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Activity, Archive, Boxes, Check, ChevronRight, CircleUserRound, Database, FolderKanban,
-  FlaskConical, Gauge, KeyRound, LogOut, Menu, Plus, RefreshCw, Search,
-  ShieldCheck, UserPlus, UsersRound, X, XCircle,
+  Activity, Archive, Boxes, Check, ChevronDown, ChevronRight, CircleUserRound, Database, FolderKanban,
+  Gauge, KeyRound, LogOut, Menu, ChevronLeft, Plus, RefreshCw, Search,
+  ShieldCheck, X, XCircle,
 } from 'lucide-react'
 import { api, ApiError } from './api'
 import { claims, clearToken, completeLogin, getToken, isOidcConfigured, startLogin } from './auth'
 import { isCognitoConfigured, restoreCognitoSession, signInWithPassword, signOutCognito } from './cognito'
-import type { Decision, Membership, Permission, Role, RoleChange, Site, StoredObject, Study, SystemAssignment, User } from './types'
+import { isUserFacingRole } from './roleVisibility'
+import { isUserFacingUser } from './userVisibility'
+import type { Permission, Role, RoleChange, Study, SystemAssignment, User } from './types'
 import { RepositoryPage } from './RepositoryPage'
+import { AccessManagement } from './AccessManagement'
+import { ThemeToggle } from './theme'
 
-type Page = 'overview' | 'repository' | 'studies' | 'roles' | 'memberships' | 'access' | 'users' | 'decisions' | 'objects'
+type Page = 'overview' | 'repository' | 'studies' | 'roles' | 'access' | 'users'
 
 const nav: { id: Page; label: string; icon: typeof Gauge }[] = [
   { id: 'overview', label: 'Overview', icon: Gauge },
@@ -18,21 +22,17 @@ const nav: { id: Page; label: string; icon: typeof Gauge }[] = [
   { id: 'studies', label: 'Study registry', icon: Database },
   { id: 'users', label: 'Users', icon: CircleUserRound },
   { id: 'roles', label: 'Roles & permissions', icon: ShieldCheck },
-  { id: 'access', label: 'Product access', icon: ShieldCheck },
-  { id: 'memberships', label: 'Memberships', icon: UsersRound },
-  { id: 'decisions', label: 'Decision lab', icon: FlaskConical },
-  { id: 'objects', label: 'Object catalog', icon: Boxes },
+  { id: 'access', label: 'Access management', icon: ShieldCheck },
 ]
 
-const membershipProducts = [
-  { id: 'platform', label: 'Repository' },
-  { id: 'aurinara-edc', label: 'Aurinara EDC' },
-  { id: 'aurinara', label: 'Aurinara' },
-] as const
-type MembershipProduct = (typeof membershipProducts)[number]['id']
+function pageFromHash(): Page {
+  const requested = location.hash.slice(1)
+  if (requested === 'memberships') return 'access'
+  return nav.some((item) => item.id === requested) ? requested as Page : 'overview'
+}
 
 function message(error: unknown): string {
-  if (error instanceof ApiError) return `${error.message} · ${error.code}${error.requestId ? ` · ${error.requestId}` : ''}`
+  if (error instanceof ApiError) return error.message
   return error instanceof Error ? error.message : 'Unexpected error'
 }
 
@@ -40,9 +40,10 @@ export function App() {
   const [ready, setReady] = useState(false)
   const [user, setUser] = useState<User | null>(null)
   const [studies, setStudies] = useState<Study[]>([])
-  const [page, setPage] = useState<Page>(() => (location.hash.slice(1) as Page) || 'overview')
+  const [page, setPage] = useState<Page>(pageFromHash)
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const notify = useCallback((kind: 'ok' | 'error', text: string) => {
     setNotice({ kind, text })
@@ -61,8 +62,7 @@ export function App() {
         if (location.pathname === '/auth/callback') {
           const returnTo = await completeLogin(location.search)
           history.replaceState({}, '', returnTo)
-          const restoredPage = location.hash.slice(1) as Page
-          setPage(nav.some((item) => item.id === restoredPage) ? restoredPage : 'overview')
+          setPage(pageFromHash())
         }
         if (!getToken()) await restoreCognitoSession()
         if (getToken()) await load()
@@ -87,11 +87,16 @@ export function App() {
 
   const title = nav.find((item) => item.id === page)?.label || 'Overview'
   return (
-    <div className="app-shell">
+    <div className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
       <aside className={menuOpen ? 'sidebar open' : 'sidebar'}>
-        <div className="brand"><div className="brand-mark"><ShieldCheck /></div><div><strong>Aurinara</strong><span>Platform control plane</span></div></div>
+        <div className="brand">
+          <button className="sidebar-brand-expand" aria-label="Expand sidebar" title="Expand sidebar" aria-expanded={false} onClick={() => setSidebarCollapsed(false)}><span className="brand-mark"><ShieldCheck /></span></button>
+          <div className="brand-mark brand-mark-expanded"><ShieldCheck /></div>
+          <div className="brand-copy"><strong>Aurinara</strong><span>Platform control plane</span></div>
+          <button className="sidebar-toggle" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded onClick={() => setSidebarCollapsed(true)}><ChevronLeft /></button>
+        </div>
         <nav aria-label="Primary navigation">
-          {nav.map((item) => <button key={item.id} className={page === item.id ? 'nav-item active' : 'nav-item'} onClick={() => selectPage(item.id)}><item.icon /><span>{item.label}</span><ChevronRight /></button>)}
+          {nav.map((item) => <button key={item.id} title={sidebarCollapsed ? item.label : undefined} aria-label={sidebarCollapsed ? item.label : undefined} className={page === item.id ? 'nav-item active' : 'nav-item'} onClick={() => selectPage(item.id)}><item.icon /><span>{item.label}</span><ChevronRight /></button>)}
         </nav>
         <div className="sidebar-foot">
           <span className="eyebrow">Signed in as</span><strong>{user.display_name || user.email || user.subject}</strong>
@@ -101,22 +106,38 @@ export function App() {
       </aside>
       {menuOpen && <button className="scrim" aria-label="Close menu" onClick={() => setMenuOpen(false)} />}
       <main>
-        <header className="topbar"><button className="icon mobile-only" onClick={() => setMenuOpen(true)}><Menu /></button><div><span className="eyebrow">Shared administration</span><h1>{title}</h1></div><div className="environment"><span className="pulse" />Control plane online</div></header>
+        <header className="topbar"><button className="icon mobile-only" onClick={() => setMenuOpen(true)}><Menu /></button><div className="topbar-title"><span className="eyebrow">Platform administration</span><h1>{title}</h1></div><div className="topbar-actions"><ThemeToggle /><AccountMenu user={user} onSignOut={() => { signOutCognito(); setUser(null) }} /></div></header>
         <div className="content">
           {page === 'overview' && <Overview user={user} studies={studies} onNavigate={selectPage} />}
           {page === 'repository' && <RepositoryPage studies={studies} notify={notify} />}
           {page === 'studies' && <Studies studies={studies} setStudies={setStudies} notify={notify} />}
-          {page === 'memberships' && <Memberships studies={studies} notify={notify} />}
           {page === 'roles' && <Roles notify={notify} />}
-          {page === 'access' && <ProductAccess notify={notify} />}
+          {page === 'access' && <AccessManagement studies={studies} notify={notify} />}
           {page === 'users' && <Users notify={notify} />}
-          {page === 'decisions' && <Decisions currentUser={user} studies={studies} notify={notify} />}
-          {page === 'objects' && <Objects notify={notify} />}
         </div>
       </main>
       {notice && <div role="status" className={`toast ${notice.kind}`} >{notice.kind === 'ok' ? <Check /> : <XCircle />}<span>{notice.text}</span><button onClick={() => setNotice(null)}><X /></button></div>}
     </div>
   )
+}
+
+function AccountMenu({ user, onSignOut }: { user: User; onSignOut: () => void }) {
+  const primary = user.display_name || user.email || 'Account'
+  const secondary = user.email || 'Signed in'
+  const initials = primary.trim().split(/\s+/).filter(Boolean)
+  const avatar = (initials.length > 1 ? `${initials[0][0]}${initials.at(-1)?.[0] ?? ''}` : primary.slice(0, 2)).toUpperCase()
+  return <details className="account-menu">
+    <summary className="account-trigger" aria-label={`Open user menu for ${primary}`}>
+      <span className="account-avatar" aria-hidden="true">{avatar}</span>
+      <span className="account-copy"><strong>{primary}</strong><span>{secondary}</span></span>
+      <ChevronDown className="account-chevron" aria-hidden="true" />
+    </summary>
+    <div className="account-popover" role="menu">
+      <div className="account-identity"><strong>{primary}</strong><span>{secondary}</span></div>
+      <div className="account-separator" role="separator" />
+      <button role="menuitem" className="account-signout" onClick={onSignOut}><LogOut />Sign out</button>
+    </div>
+  </details>
 }
 
 function Login({ onError, notice }: { onError: (text: string) => void; notice: { kind: string; text: string } | null }) {
@@ -136,8 +157,8 @@ function Login({ onError, notice }: { onError: (text: string) => void; notice: {
       setSubmitting(false)
     }
   }
-  return <div className="login-page"><div className="login-orbit orbit-one"/><div className="login-orbit orbit-two"/><section className="login-card">
-    <div className="brand-mark large"><ShieldCheck /></div><span className="eyebrow">Aurinara shared services</span><h1>Platform Console</h1>
+  return <div className="login-page"><div className="login-orbit orbit-one"/><div className="login-orbit orbit-two"/><div className="login-stack"><div className="login-brand"><div className="brand-mark"><ShieldCheck /></div><div><strong>Aurinara</strong><span>Platform control plane</span></div></div><section className="login-card">
+    <h1>Platform Console</h1>
     <p>Govern canonical studies, identities, authorization, and immutable objects from one secure control surface.</p>
     {identity && <p className="inline-note">Session found for {identity.email || identity.sub}. Refresh to continue.</p>}
     {!managedLoginOnly && isCognitoConfigured() && <form className="login-form" onSubmit={(event) => void passwordLogin(event)}>
@@ -149,7 +170,7 @@ function Login({ onError, notice }: { onError: (text: string) => void; notice: {
     {isOidcConfigured() && <button className={!managedLoginOnly && isCognitoConfigured() ? 'secondary login-button sso' : 'primary login-button'} onClick={() => void startLogin().catch((error) => onError(message(error)))}><ShieldCheck />Continue with secure sign in</button>}
     <div className="login-features"><span><Check />OIDC + PKCE</span><span><Check />Fail-closed authorization</span><span><Check />No bucket credentials</span></div>
     {notice && <div className="form-error">{notice.text}</div>}
-  </section><footer>Private administrative surface · Access is audited and policy controlled</footer></div>
+  </section><footer>Private administrative surface · Access is audited and policy controlled</footer></div></div>
 }
 
 function Overview({ user, studies, onNavigate }: { user: User; studies: Study[]; onNavigate: (page: Page) => void }) {
@@ -177,83 +198,8 @@ function Studies({ studies, setStudies, notify }: { studies: Study[]; setStudies
   return <Panel title="Canonical study registry" subtitle="Globally unique identities shared by Aurinara products" action={<button className="primary" onClick={() => setCreating(!creating)}><Plus />Register study</button>}>
     {creating && <form className="inline-form" onSubmit={(event) => void create(event)}><Field label="Study code"><input name="code" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,99}" placeholder="STUDY-2026-01" /></Field><Field label="Display name"><input name="name" required placeholder="Protocol display name" /></Field><Field label="Sponsor"><input name="sponsor" required placeholder="Sponsor organization" /></Field><button disabled={busy} className="primary">{busy ? 'Registering…' : 'Register'}</button></form>}
     <div className="toolbar"><div className="search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search studies" /></div><span>{filtered.length} records</span></div>
-    <div className="table-wrap"><table><thead><tr><th>Study</th><th>Sponsor</th><th>Canonical ID</th><th>Status</th><th>Revision</th><th /></tr></thead><tbody>{filtered.map((study) => <tr key={study.id}><td><strong>{study.display_name}</strong><span>{study.code}</span></td><td>{study.sponsor ?? 'Not supplied'}</td><td><code>{study.id}</code></td><td><Status value={study.status} /></td><td>v{study.revision}</td><td><button className="ghost" onClick={() => void toggle(study)}><Archive />{study.status === 'active' ? 'Archive' : 'Activate'}</button></td></tr>)}</tbody></table></div>
+    <div className="table-wrap"><table><thead><tr><th>Study</th><th>Sponsor</th><th>Status</th><th>Revision</th><th /></tr></thead><tbody>{filtered.map((study) => <tr key={study.id}><td><strong>{study.display_name}</strong><span>{study.code}</span></td><td>{study.sponsor ?? 'Not supplied'}</td><td><Status value={study.status} /></td><td>v{study.revision}</td><td><button className="ghost" onClick={() => void toggle(study)}><Archive />{study.status === 'active' ? 'Archive' : 'Activate'}</button></td></tr>)}</tbody></table></div>
   </Panel>
-}
-
-function Memberships({ studies, notify }: { studies: Study[]; notify: Notify }) {
-  const [studyId, setStudyId] = useState(studies[0]?.id || '')
-  const [items, setItems] = useState<Membership[]>([])
-  const [sites, setSites] = useState<Site[]>([])
-  const [users, setUsers] = useState<User[]>([])
-  const [roles, setRoles] = useState<Role[]>([])
-  const [userId, setUserId] = useState('')
-  const [product, setProduct] = useState<MembershipProduct>('aurinara-edc')
-  const [scope, setScope] = useState<'study' | 'site'>('study')
-  const [siteId, setSiteId] = useState('')
-  const [selected, setSelected] = useState<string[]>([])
-  const [loading, setLoading] = useState(false)
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    void Promise.all([api.users(), api.roles()])
-      .then(([nextUsers, nextRoles]) => {
-        setUsers(nextUsers)
-        setRoles(nextRoles)
-        setUserId((current) => current || nextUsers[0]?.id || '')
-      })
-      .catch((error) => notify('error', message(error)))
-  }, [notify])
-
-  const refresh = useCallback(async () => {
-    if (!studyId) return
-    setLoading(true)
-    try {
-      const [nextItems, nextSites] = await Promise.all([
-        api.memberships(studyId),
-        api.sites(studyId),
-      ])
-      setItems(nextItems)
-      setSites(nextSites)
-      setSiteId((current) => nextSites.some((site) => site.id === current) ? current : nextSites[0]?.id || '')
-    }
-    catch (error) { notify('error', message(error)) }
-    finally { setLoading(false) }
-  }, [studyId, notify])
-  useEffect(() => { void refresh() }, [refresh])
-
-  const scopedRoles = roles.filter((role) => role.product === product && role.scope_level === scope && role.assignable)
-  const visibleItems = items.filter((item) => item.product === product)
-  const siteNames = new Map(sites.map((site) => [site.id, site.name]))
-  const productLabel = membershipProducts.find((item) => item.id === product)?.label || product
-  useEffect(() => { setSelected([]) }, [product, scope])
-
-  const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!studyId || !userId || selected.length === 0) return
-    setBusy(true)
-    try {
-      await api.replaceMembership(studyId, userId, product, selected, scope === 'site' ? siteId : '')
-      await refresh()
-      notify('ok', `${scope === 'site' ? 'Site' : 'Study'} membership updated`)
-    } catch (error) {
-      notify('error', message(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const remove = async (item: Membership) => { try { await api.removeMembership(item.study_id, item.user_id, item.product, item.site_id); await refresh(); notify('ok', `${productLabel} membership scope removed`) } catch (error) { notify('error', message(error)) } }
-
-  return <><div className="product-tabs" role="tablist" aria-label="Membership product">
-    {membershipProducts.map((item) => <button key={item.id} type="button" role="tab" aria-selected={product === item.id} className={product === item.id ? 'active' : ''} onClick={() => setProduct(item.id)}>{item.label}</button>)}
-  </div><Panel title={`${productLabel} study and site memberships`} subtitle="Assign only study- or site-scoped product roles" action={<select value={studyId} onChange={(event) => { setStudyId(event.target.value); setSiteId('') }}>{studies.map((study) => <option key={study.id} value={study.id}>{study.code} · {study.display_name}</option>)}</select>}>
-    <form className="membership-editor" onSubmit={(event) => void save(event)}>
-      <div className="membership-fields"><Field label="User"><select required value={userId} onChange={(event) => setUserId(event.target.value)}>{users.map((user) => <option key={user.id} value={user.id}>{user.display_name || user.email || user.subject}</option>)}</select></Field><Field label="Assignment scope"><select value={scope} onChange={(event) => setScope(event.target.value as 'study' | 'site')}><option value="study">Study-wide</option><option value="site">Specific site</option></select></Field>{scope === 'site' && <Field label="Site"><select required value={siteId} onChange={(event) => setSiteId(event.target.value)} disabled={sites.length === 0}><option value="">{sites.length === 0 ? 'No active sites available' : 'Select a site'}</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}{site.city ? ` · ${site.city}` : ''}{site.country ? ` · ${site.country}` : ''}</option>)}</select></Field>}</div>
-      <div className="role-selector"><span className="eyebrow">Available {scope} roles</span>{scopedRoles.map((role) => <label key={role.id}><input type="checkbox" checked={selected.includes(role.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, role.id] : selected.filter((id) => id !== role.id))} /><span><strong>{role.name}</strong><small>{role.description || `${role.scope_level}-scope access`}</small></span></label>)}{scopedRoles.length === 0 && <Empty text={`No ${scope}-scope roles registered for ${productLabel}`} />}</div>
-      <button className="primary" disabled={busy || !userId || !studyId || selected.length === 0 || (scope === 'site' && !siteId)}><UserPlus />{busy ? 'Saving…' : 'Save membership'}</button>
-    </form>
-    {loading ? <Spinner /> : <div className="table-wrap membership-table"><table><thead><tr><th>User</th><th>Role</th><th>Scope</th><th /></tr></thead><tbody>{visibleItems.map((item) => <tr key={item.id}><td><strong>{item.user_display_name || item.user_email || item.user_id}</strong><span>{item.user_email || item.user_id}</span></td><td><strong>{item.role_name}</strong><span>{item.role_id}</span></td><td>{item.site_id ? <><strong>Site</strong><span>{siteNames.get(item.site_id) || 'Unavailable site'}</span></> : 'Study-wide'}</td><td><button className="danger-link" onClick={() => void remove(item)}>Remove scope</button></td></tr>)}</tbody></table>{visibleItems.length === 0 && <Empty text={`No ${productLabel} assignments for this study`} />}</div>}
-  </Panel><Callout>Platform owns role composition. System roles are assigned under Product access; study and site roles are assigned here.</Callout></>
 }
 
 function Users({ notify }: { notify: Notify }) {
@@ -262,13 +208,12 @@ function Users({ notify }: { notify: Notify }) {
   const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
-  const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async (preferredUserId?: string) => {
     setLoading(true)
     try {
-      const nextUsers = await api.users()
+      const nextUsers = (await api.users()).filter(isUserFacingUser)
       const assignmentEntries = await Promise.all(nextUsers.map(async (user) =>
         [user.id, await api.systemAssignments(user.id)] as const))
       setUsers(nextUsers)
@@ -285,29 +230,6 @@ function Users({ notify }: { notify: Notify }) {
   }, [notify])
 
   useEffect(() => { void refresh() }, [refresh])
-
-  const create = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const form = event.currentTarget
-    const data = new FormData(form)
-    setBusy(true)
-    try {
-      const user = await api.createUser({
-        issuer: String(data.get('issuer')),
-        subject: String(data.get('subject')),
-        email: String(data.get('email')),
-        display_name: String(data.get('name')),
-      })
-      form.reset()
-      setCreating(false)
-      await refresh(user.id)
-      notify('ok', 'Identity registered')
-    } catch (error) {
-      notify('error', message(error))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   const selectedUser = users.find((user) => user.id === selectedId) || null
   const update = async (event: FormEvent<HTMLFormElement>) => {
@@ -332,13 +254,13 @@ function Users({ notify }: { notify: Notify }) {
 
   const filtered = users.filter((user) => {
     const roles = (assignments[user.id] || []).map((item) => `${item.product} ${item.role_name}`).join(' ')
-    return `${user.display_name || ''} ${user.email || ''} ${user.issuer} ${user.subject} ${user.id} ${roles}`.toLowerCase().includes(query.toLowerCase())
+    return `${user.display_name || ''} ${user.email || ''} ${roles}`.toLowerCase().includes(query.toLowerCase())
   })
 
   return <>
-    <Panel title="User directory" subtitle="Every human and service identity registered in Aurinara Platform" action={<button className="primary" onClick={() => setCreating((value) => !value)}><UserPlus />{creating ? 'Close registration' : 'Register identity'}</button>}>
-      <div className="toolbar"><div className="search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search users, IDs, or roles" /></div><span>{filtered.length} of {users.length} users</span></div>
-      {loading ? <Spinner /> : <div className="table-wrap"><table><thead><tr><th>User</th><th>External identity</th><th>Global user ID</th><th>Product roles</th><th>Status</th><th>Revision</th><th /></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><td><strong>{user.display_name || 'Unnamed identity'}</strong><span>{user.email || 'No email address'}</span></td><td><strong>{user.issuer}</strong><span className="mono">{user.subject}</span></td><td><code>{user.id}</code></td><td><div className="role-list">{(assignments[user.id] || []).map((item) => <span className="role-pill" key={item.id}>{item.product} · {item.role_name}</span>)}{(assignments[user.id] || []).length === 0 && <span>None assigned</span>}</div></td><td><Status value={user.status} /></td><td>v{user.revision}</td><td><button className="ghost" onClick={() => setSelectedId(user.id)}>Manage</button></td></tr>)}</tbody></table>{filtered.length === 0 && <Empty text={users.length ? 'No users match this search' : 'No registered users'} />}</div>}
+    <Panel title="User directory" subtitle="People and service accounts provisioned for Aurinara Platform">
+      <div className="toolbar"><div className="search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, email, or role" /></div><span>{filtered.length} of {users.length} users</span></div>
+      {loading ? <Spinner /> : <div className="table-wrap"><table><thead><tr><th>User</th><th>Product roles</th><th>Status</th><th>Revision</th><th /></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><td><strong>{user.display_name || 'Unnamed account'}</strong><span>{user.email || 'No email address'}</span></td><td><div className="role-list">{(assignments[user.id] || []).map((item) => <span className="role-pill" key={item.id}>{item.product} · {item.role_name}</span>)}{(assignments[user.id] || []).length === 0 && <span>None assigned</span>}</div></td><td><Status value={user.status} /></td><td>v{user.revision}</td><td><button className="ghost" onClick={() => setSelectedId(user.id)}>Manage</button></td></tr>)}</tbody></table>{filtered.length === 0 && <Empty text={users.length ? 'No users match this search' : 'No provisioned users'} />}</div>}
     </Panel>
     <div className="two-column">
       <Panel title="User details" subtitle="Update the selected global user profile and account status">
@@ -347,20 +269,20 @@ function Users({ notify }: { notify: Notify }) {
           <Field label="Display name"><input name="name" required defaultValue={selectedUser.display_name || ''} /></Field>
           <Field label="Email"><input name="email" required type="email" defaultValue={selectedUser.email || ''} /></Field>
           <Field label="Account status"><select name="status" defaultValue={selectedUser.status}><option value="active">Active</option><option value="inactive">Inactive</option></select></Field>
-          <div className="identity-summary"><Detail label="OIDC issuer" value={selectedUser.issuer} mono /><Detail label="Immutable subject" value={selectedUser.subject} mono /><Detail label="Global user ID" value={selectedUser.id} mono /></div>
+          <details className="technical-details"><summary>Technical details</summary><div className="identity-summary"><Detail label="Identity provider" value={selectedUser.issuer} mono /><Detail label="Provider subject" value={selectedUser.subject} mono /><Detail label="Internal user reference" value={selectedUser.id} mono /></div></details>
           <button className="secondary" disabled={busy}>{busy ? 'Saving…' : 'Save user details'}</button>
         </form> : <Empty text="Select a user to manage" />}
       </Panel>
-      <Panel title={creating ? 'Register an external identity' : 'What registration does'} subtitle="Connect an existing sign-in identity to the Platform">
-        <Callout>Registration creates the Platform mapping used for authorization. It does not create a Cognito account, set a password, or send an invitation.</Callout>
-        {creating ? <form className="stack-form registration-form" onSubmit={(event) => void create(event)}><Field label="OIDC issuer"><input name="issuer" required placeholder="https://cognito-idp.region.amazonaws.com/pool-id" /></Field><Field label="Immutable subject"><input name="subject" required placeholder="Identity provider subject (sub)" /></Field><Field label="Email"><input name="email" required type="email" /></Field><Field label="Display name"><input name="name" required /></Field><button disabled={busy} className="primary"><UserPlus />{busy ? 'Registering…' : 'Register identity'}</button></form> : <div className="registration-help"><p>Use this only after the person or service already exists in the configured identity provider.</p><p>The issuer identifies that provider, and the subject is its permanent unique ID. Together they bind future login tokens to this global user.</p><p>Assign product roles from <strong>Product access</strong> after registration.</p></div>}
+      <Panel title="How users appear here" subtitle="Identity provisioning stays outside the day-to-day access workflow">
+        <Callout>Users appear after secure sign-in or approved identity automation. Administrators never need to copy identity-provider identifiers.</Callout>
+        <div className="registration-help"><p>If a person is missing, ask them to sign in through the configured provider or use the organization&apos;s provisioning process.</p><p>After the account appears, assign product and study roles from <strong>Access management</strong>.</p></div>
       </Panel>
     </div>
   </>
 }
 
 function Roles({ notify }: { notify: Notify }) {
-  const product = 'aurinara-edc'
+  const [product, setProduct] = useState('aurinara')
   const [roles, setRoles] = useState<Role[]>([])
   const [permissions, setPermissions] = useState<Permission[]>([])
   const [changes, setChanges] = useState<RoleChange[]>([])
@@ -369,6 +291,7 @@ function Roles({ notify }: { notify: Notify }) {
   const [scope, setScope] = useState<'system' | 'study' | 'site'>('study')
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
+  const [actorNames, setActorNames] = useState<Record<string, string>>({})
 
   const selectedRole = roles.find((role) => role.id === selectedId) || null
   const availablePermissions = permissions.filter((permission) =>
@@ -377,17 +300,24 @@ function Roles({ notify }: { notify: Notify }) {
 
   const refresh = useCallback(async (preferredRoleId?: string) => {
     try {
-      const [nextRoles, nextPermissions] = await Promise.all([
+      const [nextRoles, nextPermissions, nextUsers] = await Promise.all([
         api.roles(product),
         api.permissions(product),
+        api.users(),
       ])
-      setRoles(nextRoles)
+      const userFacingRoles = nextRoles.filter(isUserFacingRole)
+      setRoles(userFacingRoles)
       setPermissions(nextPermissions)
-      setSelectedId((current) => preferredRoleId || current || nextRoles[0]?.id || '')
+      setActorNames(Object.fromEntries(nextUsers.map((user) => [user.id, user.display_name || user.email || 'Platform user'])))
+      setSelectedId(
+        preferredRoleId && userFacingRoles.some((role) => role.id === preferredRoleId)
+          ? preferredRoleId
+          : userFacingRoles[0]?.id || '',
+      )
     } catch (error) {
       notify('error', message(error))
     }
-  }, [notify])
+  }, [notify, product])
 
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
@@ -427,7 +357,7 @@ function Roles({ notify }: { notify: Notify }) {
         reason: String(data.get('reason')),
       }
       const saved = creating
-        ? await api.createRole(product, common)
+        ? await api.createRole(product, { ...common, key: String(data.get('key')) })
         : await api.patchRole(selectedRole!.id, selectedRole!.revision, {
             ...common,
             description: common.description || null,
@@ -446,17 +376,18 @@ function Roles({ notify }: { notify: Notify }) {
   const formRole = creating ? null : selectedRole
   return <>
     <div className="two-column">
-      <Panel title="Platform-managed roles" subtitle="Role composition is authoritative in the control plane" action={<button className="primary" onClick={startCreate}><Plus />New role</button>}>
+      <Panel title="Platform-managed roles" subtitle="Role composition is authoritative in the control plane" action={<div className="toolbar"><select aria-label="Role product" value={product} onChange={(event) => { setProduct(event.target.value); setRoles([]); setPermissions([]); setChanges([]); setCreating(false); setSelectedId('') }}><option value="platform">Platform</option><option value="aurinara">Aurinara</option><option value="aurinara-edc">Aurinara EDC</option></select><button className="primary" onClick={startCreate}><Plus />New role</button></div>}>
         <div className="role-selector">
           {roles.map((role) => <label key={role.id} className={selectedId === role.id && !creating ? 'selected' : ''}>
             <input type="radio" name="selected-role" checked={selectedId === role.id && !creating} onChange={() => { setCreating(false); setSelectedId(role.id) }} />
-            <span><strong>{role.name}</strong><small>{role.scope_level} · {role.permission_codes.length} permissions · {role.status}</small></span>
+            <span><strong>{role.name}</strong><small>{role.scope_level} · {role.permission_policy} · {role.permission_codes.length} registered permissions · {role.status}</small></span>
           </label>)}
           {roles.length === 0 && <Empty text="No roles configured for this product" />}
         </div>
       </Panel>
       <Panel title={creating ? 'Create role' : 'Edit role'} subtitle="Every change requires a reason and creates immutable policy evidence">
-        {(creating || formRole) ? <form key={creating ? 'new-role' : `${formRole!.id}-${formRole!.revision}`} className="stack-form" onSubmit={(event) => void save(event)}>
+        {formRole?.built_in ? <div className="registration-help"><p><strong>{formRole.name}</strong> is a built-in Platform role.</p><p>Its policy is managed by the Platform release and cannot be edited. Clone its explicit permissions into a custom role when a different composition is needed.</p></div> : (creating || formRole) ? <form key={creating ? 'new-role' : `${formRole!.id}-${formRole!.revision}`} className="stack-form" onSubmit={(event) => void save(event)}>
+          {creating && <Field label="Stable role key"><input name="key" required pattern="[a-z][a-z0-9_.-]{2,159}" placeholder="custom.study_programmer" /></Field>}
           <Field label="Role name"><input name="name" required defaultValue={formRole?.name || ''} /></Field>
           <Field label="Description"><textarea name="description" defaultValue={formRole?.description || ''} /></Field>
           <Field label="Scope"><select value={scope} onChange={(event) => { setScope(event.target.value as typeof scope); setSelectedPermissions([]) }}><option value="system">System</option><option value="study">Study</option><option value="site">Site</option></select></Field>
@@ -471,94 +402,9 @@ function Roles({ notify }: { notify: Notify }) {
       </Panel>
     </div>
     {!creating && selectedRole && <Panel title="Role change history" subtitle="Append-only evidence tied to Platform policy versions">
-      <div className="table-wrap"><table><thead><tr><th>When</th><th>Action</th><th>Reason</th><th>Policy</th><th>Actor</th></tr></thead><tbody>{changes.map((change) => <tr key={change.id}><td>{new Date(change.created_at).toLocaleString()}</td><td><Status value={change.action} /></td><td>{change.reason}</td><td>v{change.policy_version}</td><td><code>{change.actor_id}</code></td></tr>)}</tbody></table>{changes.length === 0 && <Empty text="No centrally managed changes recorded yet" />}</div>
+      <div className="table-wrap"><table><thead><tr><th>When</th><th>Action</th><th>Reason</th><th>Policy</th><th>Actor</th></tr></thead><tbody>{changes.map((change) => <tr key={change.id}><td>{new Date(change.created_at).toLocaleString()}</td><td><Status value={change.action} /></td><td>{change.reason}</td><td>v{change.policy_version}</td><td>{actorNames[change.actor_id] || 'Platform administrator'}</td></tr>)}</tbody></table>{changes.length === 0 && <Empty text="No centrally managed changes recorded yet" />}</div>
     </Panel>}
   </>
-}
-
-function ProductAccess({ notify }: { notify: Notify }) {
-  const [users, setUsers] = useState<User[]>([])
-  const [roles, setRoles] = useState<Role[]>([])
-  const [userId, setUserId] = useState('')
-  const [product, setProduct] = useState('aurinara-edc')
-  const [selected, setSelected] = useState<string[]>([])
-  const [assignments, setAssignments] = useState<SystemAssignment[]>([])
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    void Promise.all([api.users(), api.roles()])
-      .then(([nextUsers, nextRoles]) => {
-        setUsers(nextUsers)
-        setRoles(nextRoles)
-        setUserId((current) => current || nextUsers[0]?.id || '')
-      })
-      .catch((error) => notify('error', message(error)))
-  }, [notify])
-
-  const refresh = useCallback(async () => {
-    if (!userId) return
-    try {
-      const next = await api.systemAssignments(userId)
-      setAssignments(next)
-    } catch (error) {
-      notify('error', message(error))
-    }
-  }, [notify, userId])
-
-  useEffect(() => { void refresh() }, [refresh])
-
-  useEffect(() => {
-    setSelected(assignments.filter((item) => item.product === product).map((item) => item.role_id))
-  }, [assignments, product])
-
-  const save = async () => {
-    if (!userId) return
-    setBusy(true)
-    try {
-      await api.replaceSystemAssignments(userId, product, selected)
-      await refresh()
-      notify('ok', selected.length ? `${product} access updated` : `${product} access revoked`)
-    } catch (error) {
-      notify('error', message(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const products = [...new Set(roles.filter((role) => role.product !== 'platform' && role.assignable && role.scope_level === 'system').map((role) => role.product))]
-  const productRoles = roles.filter((role) => role.product === product && role.assignable && role.scope_level === 'system')
-
-  return <div className="two-column">
-    <Panel title="Product access" subtitle="Grant product access by assigning a system-scoped role">
-      <div className="stack-form">
-        <Field label="User"><select value={userId} onChange={(event) => setUserId(event.target.value)}>{users.map((item) => <option key={item.id} value={item.id}>{item.display_name || item.email || item.subject}</option>)}</select></Field>
-        <Field label="Product"><select value={product} onChange={(event) => setProduct(event.target.value)}>{products.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
-        <div className="stack-form">{productRoles.map((role) => <label key={role.id} className="field"><span><input type="checkbox" checked={selected.includes(role.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, role.id] : selected.filter((id) => id !== role.id))} /> {role.name}</span><small>{role.description}</small></label>)}</div>
-        {productRoles.length === 0 && <Empty text="No assignable roles for this product" />}
-        <button className="primary" disabled={busy || !userId} onClick={() => void save()}><ShieldCheck />{busy ? 'Saving…' : 'Save product access'}</button>
-      </div>
-    </Panel>
-    <Panel title="Effective product roles" subtitle="System scope applies across the selected product">
-      <div className="table-wrap"><table><thead><tr><th>Product</th><th>Role</th><th>Assigned</th></tr></thead><tbody>{assignments.map((item) => <tr key={item.id}><td>{item.product}</td><td><strong>{item.role_name}</strong></td><td>{new Date(item.assigned_at).toLocaleString()}</td></tr>)}</tbody></table>{assignments.length === 0 && <Empty text="No product roles assigned" />}</div>
-      <Callout>Saving publishes a revocation-aware assignment event. Product APIs still ask Platform for the authoritative decision on every uncached permission check.</Callout>
-    </Panel>
-  </div>
-}
-
-function Decisions({ currentUser, studies, notify }: { currentUser: User; studies: Study[]; notify: Notify }) {
-  const [result, setResult] = useState<Decision | null>(null)
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const data = new FormData(event.currentTarget); try { setResult(await api.decide({ principal: { issuer: String(data.get('issuer')), subject: String(data.get('subject')) }, action: String(data.get('action')), resource: { product: String(data.get('product')), type: String(data.get('type')), id: String(data.get('resourceId')) || null, study_id: String(data.get('study')) || null, site_id: String(data.get('site')) || null } })) } catch (error) { notify('error', message(error)) } }
-  return <div className="decision-layout"><Panel title="Authorization decision lab" subtitle="Exercise the same centralized policy contract used by product APIs"><form className="stack-form" onSubmit={(event) => void submit(event)}><div className="form-grid"><Field label="Issuer"><input name="issuer" required defaultValue={currentUser.issuer} /></Field><Field label="Subject"><input name="subject" required defaultValue={currentUser.subject} /></Field><Field label="Action"><input name="action" required defaultValue="platform.study.read" /></Field><Field label="Product"><input name="product" required defaultValue="platform" /></Field><Field label="Resource type"><input name="type" required defaultValue="study" /></Field><Field label="Resource ID"><input name="resourceId" /></Field><Field label="Study"><select name="study"><option value="">System scope</option>{studies.map((study) => <option key={study.id} value={study.id}>{study.code}</option>)}</select></Field><Field label="Optional site"><input name="site" /></Field></div><button className="primary"><ShieldCheck />Evaluate policy</button></form></Panel>
-    <Panel title="Decision result" subtitle="Stable evidence for audit correlation">{result ? <div className={result.allowed ? 'decision allowed' : 'decision denied'}><div className="decision-icon">{result.allowed ? <Check /> : <X />}</div><span className="eyebrow">{result.allowed ? 'Allowed' : 'Denied'}</span><h3>{result.reason_code.replaceAll('_', ' ')}</h3><dl><dt>Decision ID</dt><dd><code>{result.decision_id}</code></dd><dt>Policy version</dt><dd>{result.policy_version}</dd><dt>Expires</dt><dd>{new Date(result.expires_at).toLocaleString()}</dd></dl></div> : <Empty text="Submit a policy request to inspect the result" />}</Panel></div>
-}
-
-function Objects({ notify }: { notify: Notify }) {
-  const [record, setRecord] = useState<StoredObject | null>(null); const [id, setId] = useState('')
-  const lookup = async (event: FormEvent) => { event.preventDefault(); try { setRecord(await api.object(id)) } catch (error) { notify('error', message(error)); setRecord(null) } }
-  const download = async () => { if (!record) return; try { const result = await api.download(record.id); window.location.assign(result.url) } catch (error) { notify('error', message(error)) } }
-  return <Panel title="Object catalog" subtitle="Resolve opaque IDs without exposing bucket keys" action={<span className="security-pill"><KeyRound />Authorized metadata only</span>}><form className="object-search" onSubmit={(event) => void lookup(event)}><div className="search"><Search /><input value={id} onChange={(event) => setId(event.target.value)} required placeholder="Object UUID" /></div><button className="primary">Look up</button></form>
-    {record ? <div className="object-detail"><div className="object-heading"><div className="code-tile large"><Boxes /></div><div><span className="eyebrow">{record.owner_product} · {record.classification}</span><h3>{record.media_type}</h3><code>{record.id}</code></div><Status value={record.status} /></div><div className="detail-grid"><Detail label="Study ID" value={record.study_id} mono /><Detail label="Size" value={formatBytes(record.size_bytes)} /><Detail label="SHA-256" value={record.sha256 || 'Pending verification'} mono /><Detail label="Retention" value={record.retention_state} /><Detail label="Created" value={new Date(record.created_at).toLocaleString()} /><Detail label="Finalized" value={record.finalized_at ? new Date(record.finalized_at).toLocaleString() : 'Not finalized'} /></div><button className="primary" disabled={record.status !== 'available'} onClick={() => void download()}><KeyRound />Authorize short-lived download</button></div> : <Empty text="Enter an opaque object ID to inspect authorized metadata" />}
-  </Panel>
 }
 
 type Notify = (kind: 'ok' | 'error', text: string) => void
@@ -571,4 +417,3 @@ function Callout({ children }: { children: ReactNode }) { return <div className=
 function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) { return <div><span>{label}</span><strong className={mono ? 'mono' : ''}>{value}</strong></div> }
 function Centered({ children }: { children: ReactNode }) { return <div className="centered">{children}</div> }
 function Spinner() { return <RefreshCw className="spinner" /> }
-export function formatBytes(value: number | null): string { if (value === null) return 'Pending verification'; if (value < 1024) return `${value} B`; if (value < 1048576) return `${(value / 1024).toFixed(1)} KB`; return `${(value / 1048576).toFixed(1)} MB` }

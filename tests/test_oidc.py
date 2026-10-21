@@ -106,6 +106,7 @@ def test_oidc_verifier_accepts_only_registered_scoped_service_clients() -> None:
         oidc_issuer="https://issuer.example",
         oidc_audience="browser-client",
         oidc_service_client_ids="service-client",
+        oidc_service_scope="https://aurinara-platform.local/service",
     )
     verifier = JwksTokenVerifier(settings)
     verifier._jwks = StaticJwks(private.public_key())

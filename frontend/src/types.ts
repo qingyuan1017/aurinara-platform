@@ -47,11 +47,14 @@ export interface Membership {
 
 export interface Role {
   id: string
+  key: string
   product: string
   name: string
   description: string | null
   scope_level: 'system' | 'study' | 'site'
   assignable: boolean
+  built_in: boolean
+  permission_policy: 'explicit' | 'all' | 'all_scoped' | 'read_scoped'
   status: 'active' | 'inactive'
   source_role_id: string | null
   revision: number

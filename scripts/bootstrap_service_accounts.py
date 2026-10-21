@@ -32,20 +32,33 @@ def _register(
     changed = False
     user = session.scalar(select(User).where(User.issuer == issuer, User.subject == client_id))
     if user is None:
-        user = User(
-            id=_stable_id("service-user", client_id),
-            issuer=issuer,
-            subject=client_id,
-            display_name=f"{product} service",
-        )
-        session.add(user)
-        changed = True
+        user = session.get(User, _stable_id("service-user", client_id))
+        if user is None:
+            user = User(
+                id=_stable_id("service-user", client_id),
+                issuer=issuer,
+                subject=client_id,
+                display_name=f"{product} service",
+            )
+            session.add(user)
+            changed = True
+    expected_user_values = {
+        "issuer": issuer,
+        "subject": client_id,
+        "display_name": f"{product} service",
+        "status": "active",
+    }
+    for attribute, expected in expected_user_values.items():
+        if getattr(user, attribute) != expected:
+            setattr(user, attribute, expected)
+            changed = True
 
     role_name = f"{product} Service"
     role = session.scalar(select(Role).where(Role.product == product, Role.name == role_name))
     if role is None:
         role = Role(
             id=_stable_id("service-role", product),
+            key=f"service.{product}",
             product=product,
             name=role_name,
             description="Runtime service-to-service access",
@@ -68,24 +81,19 @@ def _register(
 
     object_permissions = {
         "aurinara": (
-            "artifact.object.upload",
-            "artifact.object.download",
-            "artifact.object.reference",
-            "artifact.permission.sync",
-            "artifact.role.sync",
+            "aurinara.artifacts.write",
+            "aurinara.artifacts.read",
+            "aurinara.permission.sync",
         ),
         "aurinara-edc": ("edc.file.upload",),
     }
     permission_codes = ["platform.authorization.decide", *object_permissions[product]]
     if product == "aurinara-edc":
-        permission_codes.extend(("edc.permission.sync", "edc.role.sync", "edc.site.sync"))
+        permission_codes.extend(("edc.permission.sync", "edc.site.sync"))
     for code in permission_codes:
         permission_product = (
             "platform"
-            if code.startswith("platform.")
-            else "aurinara"
-            if code.startswith("artifact.")
-            else product
+            if code.startswith("platform.") else product
         )
         permission = session.get(Permission, code)
         if permission is None:

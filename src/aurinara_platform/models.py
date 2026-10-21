@@ -127,18 +127,30 @@ class Permission(Base):
 class Role(Base):
     __tablename__ = "roles"
     __table_args__ = (
+        UniqueConstraint("key", name="uq_roles_key"),
         UniqueConstraint("product", "name", name="uq_roles_product_name"),
         UniqueConstraint("product", "source_role_id", name="uq_roles_product_source_role"),
         CheckConstraint("scope_level IN ('system', 'study', 'site')", name="ck_roles_scope_level"),
+        CheckConstraint(
+            "permission_policy IN ('explicit', 'all', 'all_scoped', 'read_scoped')",
+            name="ck_roles_permission_policy",
+        ),
         CheckConstraint("status IN ('active', 'inactive')", name="ck_roles_status"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    key: Mapped[str] = mapped_column(
+        String(160), nullable=False, default=lambda: f"role.{uuid4()}"
+    )
     product: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     scope_level: Mapped[str] = mapped_column(String(16), default="system", nullable=False)
     assignable: Mapped[bool] = mapped_column(default=True, nullable=False)
+    built_in: Mapped[bool] = mapped_column(default=False, nullable=False)
+    permission_policy: Mapped[str] = mapped_column(
+        String(24), default="explicit", nullable=False
+    )
     status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
     source_role_id: Mapped[UUID | None] = mapped_column(Uuid)
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
