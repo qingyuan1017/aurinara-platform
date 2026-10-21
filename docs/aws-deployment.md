@@ -43,7 +43,7 @@ Public hostnames are:
 | Environment | Platform | Aurinara | EDC |
 | --- | --- | --- | --- |
 | staging | `platform-staging.<base-domain>` | `staging.<base-domain>` | `edc-staging.<base-domain>` |
-| production | `platform.<base-domain>` | `production.<base-domain>` | `edc.<base-domain>` |
+| production | `platform.<base-domain>` | `nara.<base-domain>` | `auri.<base-domain>` |
 
 All public application CNAMEs are Cloudflare DNS-only. CloudFront and AWS WAF
 remain the HTTP edge.
