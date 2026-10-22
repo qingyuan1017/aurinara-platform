@@ -11,6 +11,12 @@ from aurinara_platform.api import router
 from aurinara_platform.auth import JwksTokenVerifier, TokenVerifier
 from aurinara_platform.config import Settings, get_settings
 from aurinara_platform.database import create_session_factory
+from aurinara_platform.playground import (
+    AgentCoreMemoryClient,
+    AgentCoreRuntimeClient,
+    PlaygroundService,
+)
+from aurinara_platform.playground_api import router as playground_router
 from aurinara_platform.problems import install_problem_handlers
 from aurinara_platform.repository import RepositoryService
 from aurinara_platform.repository_api import router as repository_router
@@ -68,6 +74,11 @@ def create_app(
     app.state.rich_repository_service = RichRepositoryService(
         resolved, app.state.repository_service, storage, scanner
     )
+    app.state.playground_service = PlaygroundService(resolved, authorization)
+    app.state.playground_runtime = AgentCoreRuntimeClient(
+        resolved.playground_runtime_timeout_seconds
+    )
+    app.state.playground_memory = AgentCoreMemoryClient()
 
     app.add_middleware(
         CORSMiddleware,
@@ -97,6 +108,7 @@ def create_app(
     install_problem_handlers(app)
     app.include_router(router, prefix=resolved.api_prefix)
     app.include_router(repository_router, prefix=resolved.api_prefix)
+    app.include_router(playground_router, prefix=resolved.api_prefix)
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:

@@ -68,6 +68,82 @@ class User(Base):
     )
 
 
+class PlaygroundAgent(Base):
+    __tablename__ = "playground_agents"
+    __table_args__ = (
+        UniqueConstraint("runtime_arn", name="uq_playground_agents_runtime_arn"),
+        CheckConstraint("revision > 0", name="ck_playground_agents_revision"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    product_codes: Mapped[list[str]] = mapped_column(JsonType, nullable=False, default=list)
+    runtime_arn: Mapped[str] = mapped_column(String(512), nullable=False)
+    memory_id: Mapped[str | None] = mapped_column(String(255))
+    runtime_qualifier: Mapped[str] = mapped_column(String(100), nullable=False, default="DEFAULT")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class PlaygroundConversation(Base):
+    __tablename__ = "playground_conversations"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('active', 'awaiting_approval', 'archived', 'failed')",
+            name="ck_playground_conversations_state",
+        ),
+        Index("ix_playground_conversations_owner", "principal_issuer", "principal_subject"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("playground_agents.id", ondelete="RESTRICT"), nullable=False
+    )
+    product: Mapped[str] = mapped_column(String(64), nullable=False)
+    principal_issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    principal_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    runtime_session_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    title: Mapped[str | None] = mapped_column(String(160))
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    pending_interrupt_id: Mapped[str | None] = mapped_column(String(255))
+    pending_tool_name: Mapped[str | None] = mapped_column(String(255))
+    pending_arguments_sha256: Mapped[str | None] = mapped_column(String(64))
+    correlation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+    agent: Mapped[PlaygroundAgent] = relationship()
+
+
+class PlaygroundApprovalEvent(Base):
+    __tablename__ = "playground_approval_events"
+    __table_args__ = (
+        CheckConstraint("decision IN ('approve', 'deny')", name="ck_playground_approval_decision"),
+        UniqueConstraint(
+            "conversation_id", "interrupt_id", name="uq_playground_approval_interrupt"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("playground_conversations.id", ondelete="RESTRICT"), nullable=False
+    )
+    interrupt_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    arguments_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    principal_issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    principal_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class Study(Base):
     __tablename__ = "studies"
 

@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     oidc_service_scope: str = "https://aurinara-platform.local/service"
     oidc_service_audience: str | None = None
     oidc_clock_skew_seconds: int = 30
+    playground_product_audiences: str = (
+        "platform=aurinara-platform;"
+        "aurinara=aurinara,clinical-artifact-platform;"
+        "aurinara-edc=aurinara-edc,aurinara-edc-api,clinical-edc"
+    )
+    playground_runtime_timeout_seconds: int = 600
 
     authorization_decision_ttl_seconds: int = 30
     bootstrap_first_user_as_admin: bool = False
@@ -95,6 +101,20 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 
+    @property
+    def playground_audience_products(self) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        for group in self.playground_product_audiences.split(";"):
+            if not group.strip():
+                continue
+            product, separator, audiences = group.partition("=")
+            if not separator or not product.strip():
+                raise ValueError("playground product audiences must use product=audience,...")
+            for audience in audiences.split(","):
+                if audience.strip():
+                    mapping[audience.strip()] = product.strip()
+        return mapping
+
     @field_validator(
         "authorization_decision_ttl_seconds",
         "object_presign_ttl_seconds",
@@ -104,6 +124,7 @@ class Settings(BaseSettings):
         "repository_query_timeout_seconds",
         "onlyoffice_session_ttl_seconds",
         "onlyoffice_max_output_bytes",
+        "playground_runtime_timeout_seconds",
     )
     @classmethod
     def validate_positive(cls, value: int) -> int:

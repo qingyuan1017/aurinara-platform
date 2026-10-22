@@ -127,6 +127,8 @@ Resources:
         JwtIssuer: !GetAtt Identity.Outputs.JwtIssuer
         JwtJwksUrl: !GetAtt Identity.Outputs.JwtJwksUrl
         PlatformSpaClientId: !GetAtt Identity.Outputs.PlatformSpaClientId
+        AurinaraSpaClientId: !GetAtt Identity.Outputs.AurinaraSpaClientId
+        EdcSpaClientId: !GetAtt Identity.Outputs.EdcSpaClientId
         UserPoolId: !GetAtt Identity.Outputs.UserPoolId
         UserAudiences: !GetAtt Identity.Outputs.UserAudiences
         ServiceClientIds: !GetAtt Identity.Outputs.ServiceClientIds

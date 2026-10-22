@@ -1,0 +1,159 @@
+.panel-head {
+  min-height: 0;
+  padding: 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.agent-catalog-body {
+  padding: 24px;
+}
+
+.agent-form fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.agent-form fieldset legend {
+  padding: 0 6px;
+  font-weight: 500;
+}
+
+.agent-form fieldset label,
+.agent-enabled {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-form fieldset input,
+.agent-enabled input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  box-shadow: none;
+}
+
+.agent-form .field small {
+  color: var(--muted);
+}
+
+.agent-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.agent-drawer-layer {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+}
+
+.agent-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #001a1b8f;
+  box-shadow: none;
+}
+
+.agent-drawer-backdrop:hover {
+  transform: none;
+}
+
+.agent-drawer {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(34rem, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 50px #001a1b30;
+  animation: agent-drawer-in var(--duration-normal) ease-out;
+}
+
+.agent-drawer > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-drawer h2 {
+  margin: 0 0 6px;
+  font: 500 20px 'Fraunces', serif;
+}
+
+.agent-drawer header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.agent-drawer-body {
+  padding: 24px;
+  overflow: auto;
+}
+
+.agent-drawer .agent-form-actions {
+  position: sticky;
+  bottom: -24px;
+  margin: 8px -24px -24px;
+  padding: 16px 24px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+
+@keyframes agent-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@media (max-width: 560px) {
+  .panel-head,
+  .agent-catalog-body,
+  .agent-drawer > header,
+  .agent-drawer-body {
+    padding: 16px;
+  }
+
+  .panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-drawer .agent-form-actions {
+    bottom: -16px;
+    margin: 8px -16px -16px;
+    padding: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-drawer {
+    animation: none;
+  }
+}

@@ -21,6 +21,8 @@ Parameters:
   JwtIssuer: {Type: String}
   JwtJwksUrl: {Type: String}
   PlatformSpaClientId: {Type: String}
+  AurinaraSpaClientId: {Type: String}
+  EdcSpaClientId: {Type: String}
   UserPoolId: {Type: String}
   UserAudiences: {Type: String}
   ServiceClientIds: {Type: String}
@@ -116,6 +118,9 @@ Resources:
               - Effect: Allow
                 Action: cognito-idp:ListUsers
                 Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${UserPoolId}'
+              - Effect: Allow
+                Action: [bedrock-agentcore:ListEvents, bedrock-agentcore:ListMemories]
+                Resource: '*'
 
   InternalLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -249,6 +254,8 @@ Resources:
             - {Name: OIDC_JWKS_URL, Value: !Ref JwtJwksUrl}
             - {Name: OIDC_AUDIENCE, Value: !Ref PlatformSpaClientId}
             - {Name: OIDC_USER_AUDIENCES, Value: !Ref UserAudiences}
+            - Name: PLAYGROUND_PRODUCT_AUDIENCES
+              Value: !Sub 'platform=${PlatformSpaClientId};aurinara=${AurinaraSpaClientId};aurinara-edc=${EdcSpaClientId}'
             - {Name: OIDC_SERVICE_CLIENT_IDS, Value: !Ref ServiceClientIds}
             - {Name: OIDC_SERVICE_SCOPE, Value: aurinara-platform/service}
             - {Name: OBJECT_STORE_ENDPOINT, Value: ''}

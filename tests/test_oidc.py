@@ -85,6 +85,7 @@ def test_oidc_verifier_rejects_wrong_issuer_and_audience() -> None:
     assert principal.subject == "subject-1"
     assert principal.email == "person@example.test"
     assert principal.display_name == "Person Example"
+    assert principal.audience == settings.oidc_audience
 
     with pytest.raises(InvalidTokenError):
         verifier.verify(
