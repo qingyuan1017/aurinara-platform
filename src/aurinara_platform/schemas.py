@@ -592,6 +592,8 @@ class TabularColumn(BaseModel):
 
 
 class TabularPreviewResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     processing_status: str
     schema_: list[TabularColumn] = Field(alias="schema", serialization_alias="schema")
     rows: list[dict[str, object | None]]

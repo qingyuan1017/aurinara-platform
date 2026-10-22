@@ -1,5 +1,5 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Clock3, Download, Eye, File, Folder, FolderInput, History, MoreHorizontal, Plus, RefreshCw, RotateCcw, Search, Upload, X } from 'lucide-react'
+import { Archive, Clock3, Database, Download, Eye, File, FileSpreadsheet, FileText, Folder, FolderInput, History, MoreHorizontal, Plus, Presentation, RefreshCw, RotateCcw, Search, Table2, Upload, X } from 'lucide-react'
 import { api, ApiError, uploadNeutralFile, waitForRepositoryJob, type UploadProgress } from './api'
 import { RepositoryViewer } from './RepositoryViewer'
 import type { RepositoryNode, RepositoryVersion, Site, Study } from './types'
@@ -12,6 +12,29 @@ const views: Array<{ id: View; label: string }> = [
   { id: 'aurinara', label: 'Aurinara' }, { id: 'aurinara-edc', label: 'EDC' },
   { id: 'platform', label: 'Neutral' }, { id: 'archived', label: 'Archived' },
 ]
+
+const extensionKinds: Record<string, string> = {
+  pdf: 'pdf', docx: 'docx', xlsx: 'xlsx', pptx: 'pptx', csv: 'csv', parquet: 'parquet',
+}
+
+function repositoryFileKind(node: RepositoryNode): string {
+  if (node.kind === 'folder') return 'folder'
+  const detected = node.current_version?.profile?.file_kind
+  if (detected && detected !== 'unknown') return detected
+  return extensionKinds[node.display_name.split('.').pop()?.toLocaleLowerCase() || ''] || 'file'
+}
+
+function RepositoryEntryIcon({ node }: { node: RepositoryNode }) {
+  const kind = repositoryFileKind(node)
+  const props = { className: `repository-file-icon ${kind}`, 'aria-label': kind === 'folder' ? 'Folder' : `${kind.toUpperCase()} file` }
+  if (kind === 'folder') return <Folder {...props} />
+  if (kind === 'pdf' || kind === 'docx') return <FileText {...props} />
+  if (kind === 'xlsx') return <FileSpreadsheet {...props} />
+  if (kind === 'pptx') return <Presentation {...props} />
+  if (kind === 'csv') return <Table2 {...props} />
+  if (kind === 'parquet') return <Database {...props} />
+  return <File {...props} />
+}
 
 function message(error: unknown): string {
   if (error instanceof ApiError) return `${error.message} · ${error.code}`
@@ -172,13 +195,13 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
         <div className="breadcrumbs"><button onClick={() => { setPath([]); setView('folder') }}>Repository</button>{path.map((folder, index) => <span key={folder.id}>/ <button onClick={() => setPath(path.slice(0, index + 1))}>{folder.display_name}</button></span>)}<small>{items.length} visible</small></div>
         <div className="repo-table-head"><span>Name</span><span>Source</span><span>Status</span><span>Updated</span></div>
         {items.map((item) => <button key={item.id} className={`repo-row ${selected?.id === item.id ? 'selected' : ''}`} onClick={() => setSelected(item)} onDoubleClick={() => item.kind === 'folder' ? openFolder(item) : void download()}>
-          <span className="repo-name">{item.kind === 'folder' ? <Folder /> : <File />}<span><strong>{item.display_name}</strong><small>{item.kind === 'file' ? `${item.current_version_number || 0} version${item.current_version_number === 1 ? '' : 's'}` : 'Folder'}</small></span></span>
+          <span className="repo-name"><RepositoryEntryIcon node={item}/><span><strong>{item.display_name}</strong><small>{item.kind === 'file' ? `${item.current_version_number || 0} version${item.current_version_number === 1 ? '' : 's'}` : 'Folder'}</small></span></span>
           <span>{item.source_product === 'platform' ? 'Neutral' : item.source_product}</span><span className="status"><i />{item.lifecycle_status === 'archived' ? 'archived' : item.source_status}</span><span>{new Date(item.updated_at).toLocaleDateString()}</span>
         </button>)}
         {!loading && items.length === 0 && <div className="empty"><Folder /><span>No authorized entries in this view.</span></div>}
       </section>
       <aside className="repository-detail">{selected ? <>
-        <header><span className="repo-detail-icon">{selected.kind === 'folder' ? <Folder /> : <File />}</span><div><h2>{selected.display_name}</h2><p>{selected.source_product} · {selected.classification}</p></div><MoreHorizontal /></header>
+        <header><span className="repo-detail-icon"><RepositoryEntryIcon node={selected}/></span><div><h2>{selected.display_name}</h2><p>{selected.source_product} · {selected.classification}</p></div><MoreHorizontal /></header>
         <div className="repo-actions">{selected.capabilities.can_manage && <button className="secondary" onClick={() => void rename()}>Rename</button>}{selected.kind === 'file' && <button className="primary" onClick={() => void download()}><Download />Download</button>}{selected.kind === 'file' && selected.capabilities.can_preview && <button className="secondary" onClick={() => setViewerOpen(true)}><Eye />Open preview</button>}{selected.capabilities.can_manage && <button className="secondary" onClick={() => void archive()}>{selected.lifecycle_status === 'archived' ? <><RotateCcw />Restore</> : <><Archive />Archive</>}</button>}</div>
         {selected.lifecycle_status === 'active' && selected.capabilities.can_manage && <label className="field"><span>Move to equivalent-scope folder</span><select value={selected.parent_id || ''} onChange={(event) => void move(event.target.value)}><option value="">Repository root</option>{scopedDestinations.map((folder) => <option key={folder.id} value={folder.id}>{folder.display_name}</option>)}</select></label>}
         <dl><dt>Type</dt><dd>{selected.source_resource_type.replaceAll('_', ' ')}</dd><dt>Module</dt><dd>{selected.module || '—'}</dd><dt>Scope</dt><dd>{selected.site_id ? siteNames.get(selected.site_id) || 'Unavailable site' : 'Study-wide'}</dd></dl>
@@ -189,7 +212,7 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
     {viewerOpen && selected?.kind === 'file' && versions[0] && <div className="repository-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setViewerOpen(false) }}>
       <section className="repository-preview-workspace" role="dialog" aria-modal="true" aria-label={`Preview ${selected.display_name}`}>
         <header className="repository-preview-header">
-          <div className="repository-preview-title"><span className="repo-detail-icon"><File /></span><div><small>{versions[0].profile?.file_kind?.toUpperCase() || 'FILE'} · Version {versions[0].version_number}</small><h2>{selected.display_name}</h2></div></div>
+          <div className="repository-preview-title"><span className="repo-detail-icon"><RepositoryEntryIcon node={selected}/></span><div><small>{versions[0].profile?.file_kind?.toUpperCase() || 'FILE'} · Version {versions[0].version_number}</small><h2>{selected.display_name}</h2></div></div>
           <div className="repository-preview-actions"><span className={`repository-preview-status ${versions[0].profile?.processing_status || 'pending'}`}>{versions[0].profile?.processing_status || 'pending'}</span><button className="secondary" onClick={() => void download(versions[0])}><Download />Download</button><button className="icon secondary" aria-label="Close preview" onClick={() => setViewerOpen(false)}><X /></button></div>
         </header>
         <div className="repository-preview-stage"><RepositoryViewer node={selected} version={versions[0]} onChanged={() => void load()} /></div>

@@ -21,7 +21,11 @@ from aurinara_platform.models import (
 )
 from aurinara_platform.problems import Problem
 from aurinara_platform.rich_repository import RichRepositoryService
-from aurinara_platform.schemas import PdfAnnotationCreate, PdfAnnotationPatch
+from aurinara_platform.schemas import (
+    PdfAnnotationCreate,
+    PdfAnnotationPatch,
+    TabularPreviewResponse,
+)
 
 
 class BytesStorage:
@@ -124,6 +128,22 @@ def test_csv_override_is_recorded() -> None:
         "encoding": "windows-1252",
         "has_header": True,
     }
+
+
+def test_tabular_preview_response_accepts_internal_schema_field_name() -> None:
+    response = TabularPreviewResponse(
+        processing_status="ready",
+        schema_=[{"name": "subject_id", "type": "VARCHAR"}],
+        rows=[{"subject_id": "SUBJ-001"}],
+        total_rows=1,
+        page=1,
+        page_size=100,
+        parsing={},
+    )
+
+    assert response.model_dump(by_alias=True)["schema"] == [
+        {"name": "subject_id", "type": "VARCHAR"}
+    ]
 
 
 def test_analysis_jobs_are_idempotent_and_profiles_are_version_scoped(session) -> None:
