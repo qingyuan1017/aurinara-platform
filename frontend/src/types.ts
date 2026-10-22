@@ -140,11 +140,31 @@ export interface RepositoryNode {
   created_at: string
   updated_at: string
   archived_at: string | null
+  current_version: RepositoryVersion | null
+  capabilities: RepositoryCapabilities
 }
 
 export interface RepositoryPage {
   items: RepositoryNode[]
   next_cursor: string | null
+  capabilities: { can_upload: boolean; can_create_folder: boolean }
+}
+
+export interface RepositoryCapabilities {
+  can_preview: boolean
+  can_edit: boolean
+  can_annotate: boolean
+  can_manage: boolean
+  conversion_targets: Array<'csv' | 'parquet'>
+}
+
+export interface RepositoryVersionProfile {
+  file_kind: string
+  detected_media_type: string
+  processing_status: 'pending' | 'ready' | 'failed' | 'unsupported'
+  metadata_json: Record<string, unknown>
+  analyzer_version: string
+  failure_code: string | null
 }
 
 export interface RepositoryVersion {
@@ -156,8 +176,47 @@ export interface RepositoryVersion {
   sha256: string
   size_bytes: number
   media_type: string
+  derived_from_version_id: string | null
+  profile: RepositoryVersionProfile | null
+  capabilities: RepositoryCapabilities
   created_by: string
   created_at: string
+}
+
+export interface RepositoryJob {
+  id: string
+  job_type: string
+  version_id: string
+  state: 'queued' | 'running' | 'succeeded' | 'failed'
+  attempts: number
+  result: Record<string, unknown>
+  failure_code: string | null
+}
+
+export interface PdfAnnotation {
+  id: string
+  version_id: string
+  page_number: number
+  geometry: { x: number; y: number; width: number; height: number }
+  selected_text: string | null
+  comment: string | null
+  category: string
+  status: string
+  revision: number
+  created_by: string
+  updated_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TabularPreview {
+  processing_status: string
+  schema: Array<{ name: string; type: string }>
+  rows: Array<Record<string, unknown>>
+  total_rows: number
+  page: number
+  page_size: number
+  parsing: Record<string, unknown>
 }
 
 export interface ProblemPayload {

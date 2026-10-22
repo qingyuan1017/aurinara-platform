@@ -338,9 +338,7 @@ def ensure_platform_access_defaults(session: Session) -> bool:
 def ensure_policy_role_defaults(session: Session) -> bool:
     """Materialize effective policy permissions for projection and display."""
 
-    permissions = tuple(
-        session.scalars(select(Permission).where(Permission.status == "active"))
-    )
+    permissions = tuple(session.scalars(select(Permission).where(Permission.status == "active")))
     compositions = {
         "system_administrator": tuple(sorted(permission.code for permission in permissions)),
         "study_administrator": tuple(

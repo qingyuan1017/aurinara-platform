@@ -8,6 +8,26 @@ study/site-scoped authorization decisions, and immutable cross-product objects.
 Product databases never import this service's ORM models and never receive object-store
 credentials or keys.
 
+## Playground
+
+Platform owns the shared Playground agent catalog and durable conversation metadata.
+Each catalog agent has a platform-generated UUID and one unique AgentCore runtime ARN;
+updating that ARN on the existing record preserves its conversations and approval audit.
+The display name is editable, and the qualifier selects the runtime endpoint version.
+Each signed-in product user sees only enabled agents assigned to that token's product
+audience. Platform forwards the user's bearer token directly to the selected AgentCore
+runtime, normalizes its streamed events, and records each approve-once or deny decision.
+AgentCore Memory stores message history and supplies semantic, preference, summary, and
+episodic recall under the same user and runtime-session identifiers. Platform discovers a
+single active memory automatically; set a catalog entry's memory ID explicitly when an
+environment contains multiple memories.
+Mutating MCP calls require a fresh explicit confirmation; product services still enforce
+their own authorization, validation, transaction, and audit rules.
+
+System administrators manage the catalog with `platform.role.manage`. Configure
+`PLAYGROUND_PRODUCT_AUDIENCES` as `product=audience,...` groups and point each product
+frontend's `VITE_PLATFORM_API_BASE_URL` at this service.
+
 ## Central Repository
 
 Platform is the system of record for the shared Repository. It stores immutable,

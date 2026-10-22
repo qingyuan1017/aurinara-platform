@@ -14,6 +14,10 @@ Parameters:
   CognitoFromAddress: {Type: String, Default: ''}
   ApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
   MigrationApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
+  OnlyOfficeImage:
+    Type: String
+    Default: onlyoffice/documentserver:9.3.1.2@sha256:290a0a1406a485acc8a6bc20418ac7158c5eec78b4844c218f8f975a9800ddbc
+    AllowedPattern: '^onlyoffice/documentserver:[^@]+@sha256:[0-9a-f]{64}$'
   DatabaseInstanceClass: {Type: String, Default: db.m7g.large}
   MalwareScannerUrl: {Type: String, Default: ''}
   MalwareScannerTokenSecretArn:
@@ -72,6 +76,7 @@ Resources:
         Environment: !Ref Environment
         DataSubnetIds: !GetAtt Network.Outputs.DataSubnetIds
         DatabaseSecurityGroupId: !GetAtt Network.Outputs.DatabaseSecurityGroupId
+        EfsSecurityGroupId: !GetAtt Network.Outputs.EfsSecurityGroupId
         DatabaseInstanceClass: !Ref DatabaseInstanceClass
         DeploymentProfile: !Ref DeploymentProfile
         BrowserOrigins: !Sub
@@ -113,6 +118,7 @@ Resources:
         AlbSecurityGroupId: !GetAtt Network.Outputs.AlbSecurityGroupId
         ApiSecurityGroupId: !GetAtt Network.Outputs.ApiSecurityGroupId
         WorkerSecurityGroupId: !GetAtt Network.Outputs.WorkerSecurityGroupId
+        OfficeSecurityGroupId: !GetAtt Network.Outputs.OfficeSecurityGroupId
         DatabaseEndpoint: !GetAtt Data.Outputs.DatabaseEndpoint
         DatabaseSecretArn: !GetAtt Data.Outputs.DatabaseSecretArn
         DataKeyArn: !GetAtt Data.Outputs.DataKeyArn
@@ -121,6 +127,8 @@ Resources:
         JwtIssuer: !GetAtt Identity.Outputs.JwtIssuer
         JwtJwksUrl: !GetAtt Identity.Outputs.JwtJwksUrl
         PlatformSpaClientId: !GetAtt Identity.Outputs.PlatformSpaClientId
+        AurinaraSpaClientId: !GetAtt Identity.Outputs.AurinaraSpaClientId
+        EdcSpaClientId: !GetAtt Identity.Outputs.EdcSpaClientId
         UserPoolId: !GetAtt Identity.Outputs.UserPoolId
         UserAudiences: !GetAtt Identity.Outputs.UserAudiences
         ServiceClientIds: !GetAtt Identity.Outputs.ServiceClientIds
@@ -133,6 +141,19 @@ Resources:
           - Platform: !If [IsProduction, platform, platform-staging]
             Aurinara: !If [IsProduction, nara, staging]
             Edc: !If [IsProduction, auri, edc-staging]
+        PlatformPublicUrl: !Sub
+          - 'https://${Host}.${BaseDomain}'
+          - Host: !If [IsProduction, platform, platform-staging]
+        OfficeDomain: !Sub
+          - '${Host}.${BaseDomain}'
+          - Host: !If [IsProduction, office, office-staging]
+        OnlyOfficeImage: !Ref OnlyOfficeImage
+        OnlyOfficeJwtSecretArn: !GetAtt Data.Outputs.OnlyOfficeJwtSecretArn
+        OnlyOfficeFileSystemId: !GetAtt Data.Outputs.OnlyOfficeFileSystemId
+        OnlyOfficeDataAccessPointId: !GetAtt Data.Outputs.OnlyOfficeDataAccessPointId
+        OnlyOfficeLibAccessPointId: !GetAtt Data.Outputs.OnlyOfficeLibAccessPointId
+        OnlyOfficeDatabaseAccessPointId: !GetAtt Data.Outputs.OnlyOfficeDatabaseAccessPointId
+        OnlyOfficeLogsAccessPointId: !GetAtt Data.Outputs.OnlyOfficeLogsAccessPointId
         MalwareScannerUrl: !Ref MalwareScannerUrl
         MalwareScannerTokenSecretArn: !If
           - HasMalwareScanner
@@ -151,6 +172,9 @@ Resources:
         ApplicationDomain: !Sub
           - '${Host}.${BaseDomain}'
           - Host: !If [IsProduction, platform, platform-staging]
+        OfficeDomain: !Sub
+          - '${Host}.${BaseDomain}'
+          - Host: !If [IsProduction, office, office-staging]
         DnsProvider: !Ref DnsProvider
         HostedZoneId: !Ref HostedZoneId
         CertificateArn: !Ref CertificateArn
@@ -169,8 +193,11 @@ Resources:
         AlarmEmail: !Ref AlarmEmail
         ClusterName: !GetAtt Compute.Outputs.ClusterName
         ApiServiceName: !GetAtt Compute.Outputs.ApiServiceName
+        RepositoryWorkerServiceName: !GetAtt Compute.Outputs.RepositoryWorkerServiceName
+        OnlyOfficeServiceName: !GetAtt Compute.Outputs.OnlyOfficeServiceName
         AlbFullName: !GetAtt Compute.Outputs.AlbFullName
         ApiTargetGroupFullName: !GetAtt Compute.Outputs.ApiTargetGroupFullName
+        OfficeTargetGroupFullName: !GetAtt Compute.Outputs.OfficeTargetGroupFullName
         DatabaseIdentifier: !GetAtt Data.Outputs.DatabaseIdentifier
         ObjectBucketName: !GetAtt Data.Outputs.ObjectBucketName
         AccessLogBucketName: !GetAtt Data.Outputs.AccessLogBucketName
@@ -205,8 +232,14 @@ Outputs:
     Value: !Sub
       - 'https://${Host}.${BaseDomain}'
       - Host: !If [IsProduction, platform, platform-staging]
+  OfficeUrl:
+    Value: !Sub
+      - 'https://${Host}.${BaseDomain}'
+      - Host: !If [IsProduction, office, office-staging]
   CloudFrontDistributionId: {Value: !GetAtt Edge.Outputs.DistributionId}
   CloudFrontDistributionDomainName: {Value: !GetAtt Edge.Outputs.DistributionDomainName}
+  OfficeCloudFrontDistributionId: {Value: !GetAtt Edge.Outputs.OfficeDistributionId}
+  OfficeCloudFrontDistributionDomainName: {Value: !GetAtt Edge.Outputs.OfficeDistributionDomainName}
   FrontendBucketName: {Value: !GetAtt Data.Outputs.FrontendBucketName}
   ObjectBucketName: {Value: !GetAtt Data.Outputs.ObjectBucketName}
   EventBusName: {Value: !GetAtt Data.Outputs.EventBusName}

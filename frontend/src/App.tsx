@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Activity, Archive, Boxes, Check, ChevronDown, ChevronRight, CircleUserRound, Database, FolderKanban,
-  Gauge, KeyRound, LogOut, Menu, ChevronLeft, Plus, RefreshCw, Search,
+  Bot, Gauge, KeyRound, LogOut, Menu, ChevronLeft, Plus, RefreshCw, Search, Settings2,
   ShieldCheck, X, XCircle,
 } from 'lucide-react'
 import { api, ApiError } from './api'
@@ -13,12 +13,16 @@ import type { Permission, Role, RoleChange, Study, SystemAssignment, User } from
 import { RepositoryPage } from './RepositoryPage'
 import { AccessManagement } from './AccessManagement'
 import { ThemeToggle } from './theme'
+import { PlaygroundPage } from './PlaygroundPage'
+import { AgentCatalogPage } from './AgentCatalogPage'
 
-type Page = 'overview' | 'repository' | 'studies' | 'roles' | 'access' | 'users'
+type Page = 'overview' | 'repository' | 'playground' | 'agent-catalog' | 'studies' | 'roles' | 'access' | 'users'
 
 const nav: { id: Page; label: string; icon: typeof Gauge }[] = [
   { id: 'overview', label: 'Overview', icon: Gauge },
   { id: 'repository', label: 'Repository', icon: FolderKanban },
+  { id: 'playground', label: 'Playground', icon: Bot },
+  { id: 'agent-catalog', label: 'Agent catalog', icon: Settings2 },
   { id: 'studies', label: 'Study registry', icon: Database },
   { id: 'users', label: 'Users', icon: CircleUserRound },
   { id: 'roles', label: 'Roles & permissions', icon: ShieldCheck },
@@ -110,6 +114,8 @@ export function App() {
         <div className="content">
           {page === 'overview' && <Overview user={user} studies={studies} onNavigate={selectPage} />}
           {page === 'repository' && <RepositoryPage studies={studies} notify={notify} />}
+          {page === 'playground' && <PlaygroundPage />}
+          {page === 'agent-catalog' && <AgentCatalogPage />}
           {page === 'studies' && <Studies studies={studies} setStudies={setStudies} notify={notify} />}
           {page === 'roles' && <Roles notify={notify} />}
           {page === 'access' && <AccessManagement studies={studies} notify={notify} />}

@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -65,6 +66,82 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
+
+
+class PlaygroundAgent(Base):
+    __tablename__ = "playground_agents"
+    __table_args__ = (
+        UniqueConstraint("runtime_arn", name="uq_playground_agents_runtime_arn"),
+        CheckConstraint("revision > 0", name="ck_playground_agents_revision"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    product_codes: Mapped[list[str]] = mapped_column(JsonType, nullable=False, default=list)
+    runtime_arn: Mapped[str] = mapped_column(String(512), nullable=False)
+    memory_id: Mapped[str | None] = mapped_column(String(255))
+    runtime_qualifier: Mapped[str] = mapped_column(String(100), nullable=False, default="DEFAULT")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class PlaygroundConversation(Base):
+    __tablename__ = "playground_conversations"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('active', 'awaiting_approval', 'archived', 'failed')",
+            name="ck_playground_conversations_state",
+        ),
+        Index("ix_playground_conversations_owner", "principal_issuer", "principal_subject"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("playground_agents.id", ondelete="RESTRICT"), nullable=False
+    )
+    product: Mapped[str] = mapped_column(String(64), nullable=False)
+    principal_issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    principal_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    runtime_session_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    title: Mapped[str | None] = mapped_column(String(160))
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    pending_interrupt_id: Mapped[str | None] = mapped_column(String(255))
+    pending_tool_name: Mapped[str | None] = mapped_column(String(255))
+    pending_arguments_sha256: Mapped[str | None] = mapped_column(String(64))
+    correlation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+    agent: Mapped[PlaygroundAgent] = relationship()
+
+
+class PlaygroundApprovalEvent(Base):
+    __tablename__ = "playground_approval_events"
+    __table_args__ = (
+        CheckConstraint("decision IN ('approve', 'deny')", name="ck_playground_approval_decision"),
+        UniqueConstraint(
+            "conversation_id", "interrupt_id", name="uq_playground_approval_interrupt"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("playground_conversations.id", ondelete="RESTRICT"), nullable=False
+    )
+    interrupt_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    arguments_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    principal_issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    principal_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class Study(Base):
@@ -139,18 +216,14 @@ class Role(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    key: Mapped[str] = mapped_column(
-        String(160), nullable=False, default=lambda: f"role.{uuid4()}"
-    )
+    key: Mapped[str] = mapped_column(String(160), nullable=False, default=lambda: f"role.{uuid4()}")
     product: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     scope_level: Mapped[str] = mapped_column(String(16), default="system", nullable=False)
     assignable: Mapped[bool] = mapped_column(default=True, nullable=False)
     built_in: Mapped[bool] = mapped_column(default=False, nullable=False)
-    permission_policy: Mapped[str] = mapped_column(
-        String(24), default="explicit", nullable=False
-    )
+    permission_policy: Mapped[str] = mapped_column(String(24), default="explicit", nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
     source_role_id: Mapped[UUID | None] = mapped_column(Uuid)
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -390,8 +463,193 @@ class RepositoryFileVersion(Base):
     object_reference_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("object_references.id", ondelete="RESTRICT")
     )
+    derived_from_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("repository_file_versions.id", ondelete="RESTRICT")
+    )
     created_by: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RepositoryVersionProfile(Base):
+    """Detected, reproducible metadata for one immutable Repository version."""
+
+    __tablename__ = "repository_version_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "processing_status IN ('pending', 'ready', 'failed', 'unsupported')",
+            name="ck_repository_version_profiles_status",
+        ),
+        Index("ix_repository_version_profiles_status", "processing_status", "updated_at"),
+    )
+
+    version_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repository_file_versions.id", ondelete="CASCADE"), primary_key=True
+    )
+    file_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    detected_media_type: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="application/octet-stream"
+    )
+    processing_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JsonType, nullable=False, default=dict)
+    preview_object_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("stored_objects.id", ondelete="RESTRICT")
+    )
+    analyzer_version: Mapped[str] = mapped_column(String(64), nullable=False, default="1")
+    failure_code: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class RepositoryJob(Base):
+    """Durable, leased work item for analysis and derived-file creation."""
+
+    __tablename__ = "repository_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('queued', 'running', 'succeeded', 'failed')",
+            name="ck_repository_jobs_state",
+        ),
+        UniqueConstraint("idempotency_key", name="uq_repository_jobs_idempotency"),
+        Index("ix_repository_jobs_claim", "state", "available_at", "lease_expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    job_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    version_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repository_file_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    requested_by: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    payload: Mapped[dict[str, object]] = mapped_column(JsonType, nullable=False, default=dict)
+    result: Mapped[dict[str, object]] = mapped_column(JsonType, nullable=False, default=dict)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    lease_owner: Mapped[str | None] = mapped_column(String(255))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_code: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RepositoryPdfAnnotation(Base):
+    """Mutable annotation head; every mutation is also written to immutable history."""
+
+    __tablename__ = "repository_pdf_annotations"
+    __table_args__ = (
+        Index("ix_repository_pdf_annotations_version", "version_id", "deleted_at"),
+        CheckConstraint("revision > 0", name="ck_repository_pdf_annotations_revision"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    version_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repository_file_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    geometry: Mapped[dict[str, object]] = mapped_column(JsonType, nullable=False)
+    selected_text: Mapped[str | None] = mapped_column(Text)
+    comment: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, default="comment")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    updated_by: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RepositoryPdfAnnotationRevision(Base):
+    __tablename__ = "repository_pdf_annotation_revisions"
+    __table_args__ = (
+        UniqueConstraint("annotation_id", "revision", name="uq_pdf_annotation_revision"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    annotation_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repository_pdf_annotations.id", ondelete="RESTRICT"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    snapshot: Mapped[dict[str, object]] = mapped_column(JsonType, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RepositoryOfficeSession(Base):
+    __tablename__ = "repository_office_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('active', 'saved', 'closed', 'expired')",
+            name="ck_repository_office_sessions_state",
+        ),
+        Index("ix_repository_office_sessions_node_state", "node_id", "state"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    node_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repository_nodes.id", ondelete="RESTRICT"), nullable=False
+    )
+    base_version_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repository_file_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    document_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    editable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    callback_token_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_editor_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    last_saved_sha256: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class RepositoryOfficeParticipant(Base):
+    __tablename__ = "repository_office_participants"
+    __table_args__ = (
+        UniqueConstraint("session_id", "user_id", name="uq_repository_office_participant"),
+    )
+
+    session_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repository_office_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), primary_key=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RepositoryUpload(Base):
+    """Intent captured by the high-level Repository upload API."""
+
+    __tablename__ = "repository_uploads"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    object_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("stored_objects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    study_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("studies.id"), nullable=False)
+    parent_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("repository_nodes.id", ondelete="RESTRICT")
+    )
+    replacement_node_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("repository_nodes.id", ondelete="RESTRICT")
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    classification: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    created_by: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class RepositorySourceLink(Base):

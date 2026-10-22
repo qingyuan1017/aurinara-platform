@@ -1,5 +1,5 @@
 import { getToken } from './auth'
-import type { Decision, Membership, Permission, ProblemPayload, RepositoryNode, RepositoryPage, RepositoryVersion, Role, RoleChange, Site, StoredObject, Study, SystemAssignment, User } from './types'
+import type { Decision, Membership, PdfAnnotation, Permission, ProblemPayload, RepositoryJob, RepositoryNode, RepositoryPage, RepositoryVersion, Role, RoleChange, Site, StoredObject, Study, SystemAssignment, TabularPreview, User } from './types'
 
 const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -85,43 +85,94 @@ export const api = {
   restoreRepositoryNode: (node: RepositoryNode) =>
     request<RepositoryNode>(`/v1/repository/nodes/${node.id}/restore`, { method: 'POST', headers: { 'If-Match': `"${node.revision}"` } }),
   repositoryVersions: (nodeId: string) => request<RepositoryVersion[]>(`/v1/repository/nodes/${nodeId}/versions`),
+  repositoryVersion: (versionId: string) => request<RepositoryVersion & { study_id: string; filename: string }>(`/v1/repository/versions/${versionId}`),
+  repositoryNode: (nodeId: string) => request<RepositoryNode>(`/v1/repository/nodes/${nodeId}`),
   downloadRepositoryVersion: (versionId: string) => request<{ url: string; expires_at: string }>(`/v1/repository/versions/${versionId}/download`, { method: 'POST' }),
   addRepositoryVersion: (nodeId: string, body: object) => request<RepositoryVersion>(`/v1/repository/nodes/${nodeId}/versions`, { method: 'POST', body: JSON.stringify(body) }),
+  tabularPreview: (versionId: string, body: object) => request<TabularPreview>(`/v1/repository/versions/${versionId}/tabular-preview`, { method: 'POST', body: JSON.stringify(body) }),
+  annotations: (versionId: string) => request<PdfAnnotation[]>(`/v1/repository/versions/${versionId}/annotations`),
+  createAnnotation: (versionId: string, body: object) => request<PdfAnnotation>(`/v1/repository/versions/${versionId}/annotations`, { method: 'POST', body: JSON.stringify(body) }),
+  patchAnnotation: (annotation: PdfAnnotation, body: object) => request<PdfAnnotation>(`/v1/repository/annotations/${annotation.id}`, { method: 'PATCH', headers: { 'If-Match': `"${annotation.revision}"` }, body: JSON.stringify(body) }),
+  deleteAnnotation: (annotation: PdfAnnotation) => request<void>(`/v1/repository/annotations/${annotation.id}`, { method: 'DELETE', headers: { 'If-Match': `"${annotation.revision}"` } }),
+  convertRepositoryVersion: (versionId: string, target: 'csv' | 'parquet', filename: string) => request<RepositoryJob>(`/v1/repository/versions/${versionId}/conversions`, { method: 'POST', body: JSON.stringify({ target, filename, idempotency_key: crypto.randomUUID() }) }),
+  annotatedExport: (versionId: string, filename: string) => request<RepositoryJob>(`/v1/repository/versions/${versionId}/annotated-exports`, { method: 'POST', body: JSON.stringify({ filename, idempotency_key: crypto.randomUUID() }) }),
+  repositoryJob: (jobId: string) => request<RepositoryJob>(`/v1/repository/jobs/${jobId}`),
+  officeSession: (versionId: string, mode: 'view' | 'edit') => request<{ session_id: string; document_server_url: string; config: Record<string, unknown> }>(`/v1/repository/versions/${versionId}/office-sessions`, { method: 'POST', body: JSON.stringify({ mode }) }),
 }
 
-async function sha256(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')
-}
+export type UploadProgress = { phase: 'hashing' | 'uploading' | 'completing'; loaded: number; total: number }
 
-export async function uploadNeutralFile(studyId: string, file: File, parentId: string | null, replace?: RepositoryNode): Promise<void> {
-  const checksum = await sha256(file)
-  let objectId: string
-  try {
-    const upload = await request<{ object_id: string; upload_id: string; parts: Array<{ part_number: number; url: string }> }>('/v1/objects/upload-sessions', {
-      method: 'POST',
-      body: JSON.stringify({ study_id: studyId, owner_product: 'platform', classification: replace?.classification || 'internal', media_type: file.type || 'application/octet-stream', expected_sha256: checksum, expected_size_bytes: file.size, part_count: 1 }),
-    })
-    objectId = upload.object_id
-    const part = upload.parts[0]
-    const put = await fetch(part.url, { method: 'PUT', body: file })
-    if (!put.ok) throw new Error(`Object upload failed (${put.status})`)
-    await request(`/v1/objects/${objectId}/finalize`, { method: 'POST', body: JSON.stringify({ parts: [{ part_number: 1, etag: put.headers.get('ETag') || 'uploaded' }] }) })
-  } catch (error) {
-    if (!(error instanceof ApiError) || error.code !== 'object_already_exists') throw error
-    const details = error.details as { object_id?: string } | undefined
-    if (!details?.object_id) throw error
-    objectId = details.object_id
-  }
-  const key = crypto.randomUUID()
-  const reference = await request<{ id: string }>(`/v1/objects/${objectId}/references`, {
-    method: 'POST',
-    body: JSON.stringify({
-      product: 'platform', external_reference: `neutral:${key}`, idempotency_key: key,
-      ...(replace ? {} : { repository: { filename: file.name, parent_id: parentId, source_type: 'neutral_upload', source_id: key, source_status: 'available', module: 'repository', solution: 'file-management', purpose: 'user-files', classification: 'internal', access: { read_action: 'platform.repository.read', write_action: 'platform.repository.write' }, provenance: { original_filename: file.name } } }),
-    }),
+async function sha256(file: File, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./repositoryHash.worker.ts', import.meta.url), { type: 'module' })
+    const abort = () => { worker.terminate(); reject(new DOMException('Upload cancelled', 'AbortError')) }
+    signal?.addEventListener('abort', abort, { once: true })
+    worker.onmessage = (event: MessageEvent<{ type: string; loaded?: number; total?: number; sha256?: string }>) => {
+      if (event.data.type === 'progress') onProgress?.({ phase: 'hashing', loaded: event.data.loaded || 0, total: event.data.total || file.size })
+      if (event.data.type === 'complete' && event.data.sha256) { signal?.removeEventListener('abort', abort); worker.terminate(); resolve(event.data.sha256) }
+    }
+    worker.onerror = (error) => { worker.terminate(); reject(error) }
+    worker.postMessage(file)
   })
-  if (replace) {
-    await api.addRepositoryVersion(replace.id, { object_id: objectId, object_reference_id: reference.id, product: 'platform', external_reference: `neutral:${key}`, source_type: 'neutral_upload', source_id: key, source_status: 'available', provenance: { original_filename: file.name } })
+}
+
+async function uploadPart(url: string, body: Blob, signal?: AbortSignal): Promise<string> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { method: 'PUT', body, signal })
+      if (!response.ok) throw new Error(`Object upload failed (${response.status})`)
+      return response.headers.get('ETag') || 'uploaded'
+    } catch (error) { lastError = error; if (signal?.aborted) throw error }
   }
+  throw lastError
+}
+
+export async function uploadNeutralFile(studyId: string, file: File, parentId: string | null, replace?: RepositoryNode, onProgress?: (progress: UploadProgress) => void, signal?: AbortSignal): Promise<RepositoryNode> {
+  const checksum = await sha256(file, onProgress, signal)
+  const partSize = 16 * 1024 * 1024
+  const partCount = Math.max(1, Math.ceil(file.size / partSize))
+  const upload = await request<{ object_id: string; parts: Array<{ part_number: number; url: string }>; already_available: boolean }> (`/v1/studies/${studyId}/repository/uploads`, {
+    method: 'POST',
+    body: JSON.stringify({ filename: file.name, size_bytes: file.size, sha256: checksum, media_type: file.type || 'application/octet-stream', part_count: partCount, parent_id: replace ? null : parentId, replacement_node_id: replace?.id || null, classification: replace?.classification || 'internal', idempotency_key: crypto.randomUUID() }),
+  })
+  try {
+    let loaded = 0
+    const etags = new Map<number, string>()
+    const queue = [...upload.parts]
+    const runners = Array.from({ length: Math.min(3, queue.length) }, async () => {
+      while (queue.length) {
+        const part = queue.shift()
+        if (!part) return
+        const start = (part.part_number - 1) * partSize
+        const blob = file.slice(start, Math.min(start + partSize, file.size))
+        etags.set(part.part_number, await uploadPart(part.url, blob, signal))
+        loaded += blob.size
+        onProgress?.({ phase: 'uploading', loaded, total: file.size })
+      }
+    })
+    await Promise.all(runners)
+    onProgress?.({ phase: 'completing', loaded: file.size, total: file.size })
+    return await request<RepositoryNode>(`/v1/repository/uploads/${upload.object_id}/complete`, { method: 'POST', body: JSON.stringify({ parts: [...etags].sort(([a], [b]) => a - b).map(([part_number, etag]) => ({ part_number, etag })) }) })
+  } catch (error) {
+    await request<void>(`/v1/repository/uploads/${upload.object_id}`, { method: 'DELETE' }).catch(() => undefined)
+    throw error
+  }
+}
+
+export async function waitForRepositoryJob(
+  initial: RepositoryJob,
+  timeoutMs = 120_000,
+): Promise<RepositoryJob> {
+  const deadline = Date.now() + timeoutMs
+  let job = initial
+  while (job.state === 'queued' || job.state === 'running') {
+    if (Date.now() >= deadline) throw new Error('Repository job timed out')
+    await new Promise((resolve) => window.setTimeout(resolve, 1000))
+    job = await api.repositoryJob(job.id)
+  }
+  if (job.state === 'failed') {
+    throw new Error(`Repository job failed (${job.failure_code || 'unknown'})`)
+  }
+  return job
 }

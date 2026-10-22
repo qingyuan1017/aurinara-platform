@@ -20,6 +20,7 @@ class Principal:
     subject: str
     email: str | None = None
     display_name: str | None = None
+    audience: str | None = None
 
 
 class TokenVerifier(Protocol):
@@ -50,10 +51,11 @@ class JwksTokenVerifier:
         subject = claims.get("sub")
         if not isinstance(issuer, str) or not isinstance(subject, str) or not subject:
             raise InvalidTokenError("The bearer token has invalid identity claims")
+        audience: str | None = None
         if claims.get("token_use") == "access":
             self._validate_service_token(claims, subject)
         else:
-            self._validate_user_token(claims)
+            audience = self._validate_user_token(claims)
         email = claims.get("email")
         display_name = claims.get("name") or claims.get("preferred_username")
         return Principal(
@@ -61,16 +63,21 @@ class JwksTokenVerifier:
             subject=subject,
             email=email if isinstance(email, str) else None,
             display_name=display_name if isinstance(display_name, str) else None,
+            audience=audience,
         )
 
-    def _validate_user_token(self, claims: dict[str, object]) -> None:
+    def _validate_user_token(self, claims: dict[str, object]) -> str:
         audience = claims.get("aud")
         audiences = {audience} if isinstance(audience, str) else set(audience or [])
-        if not audiences.intersection(self._settings.oidc_user_audience_set):
+        matched = audiences.intersection(self._settings.oidc_user_audience_set)
+        if not matched:
             raise InvalidTokenError("The bearer token has an invalid audience")
+        if len(matched) != 1:
+            raise InvalidTokenError("The bearer token has an ambiguous audience")
         token_use = claims.get("token_use")
         if token_use not in {None, "id"}:
             raise InvalidTokenError("The bearer token has an invalid token use")
+        return next(iter(matched))
 
     def _validate_service_token(self, claims: dict[str, object], subject: str) -> None:
         client_id = claims.get("client_id")

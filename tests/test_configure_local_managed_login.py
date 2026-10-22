@@ -70,9 +70,7 @@ def test_configuration_uses_separate_clients_and_local_callbacks(tmp_path: Path)
     assert platform_frontend["VITE_OIDC_CLIENT_ID"] == "platform-development"
     assert platform_frontend["VITE_MANAGED_LOGIN_ONLY"] == "true"
     assert aurinara_frontend["VITE_OIDC_CLIENT_ID"] == "aurinara-development"
-    assert aurinara_frontend["VITE_OIDC_REDIRECT_URI"] == (
-        "http://localhost:5175/auth/callback"
-    )
+    assert aurinara_frontend["VITE_OIDC_REDIRECT_URI"] == ("http://localhost:5175/auth/callback")
     assert aurinara_frontend["VITE_OIDC_LOGOUT_URI"] == "http://localhost:5175/login"
     assert aurinara_backend["APP_CORS_ALLOW_ORIGINS"] == (
         "http://localhost:5175,http://127.0.0.1:5175"

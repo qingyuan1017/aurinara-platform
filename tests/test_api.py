@@ -494,12 +494,15 @@ def test_system_access_edit_preserves_automatic_study_creator(session_factory) -
     )
     assert response.status_code == 200
     with session_factory() as session:
-        assert session.scalar(
-            select(RoleAssignment.id).where(
-                RoleAssignment.user_id == creator.id,
-                RoleAssignment.role_id == REGISTERED_STUDY_CREATOR_ROLE_ID,
+        assert (
+            session.scalar(
+                select(RoleAssignment.id).where(
+                    RoleAssignment.user_id == creator.id,
+                    RoleAssignment.role_id == REGISTERED_STUDY_CREATOR_ROLE_ID,
+                )
             )
-        ) is not None
+            is not None
+        )
 
 
 def test_product_role_catalog_sync_is_not_exposed(session_factory) -> None:

@@ -39,9 +39,7 @@ def test_bootstrap_initial_administrator_is_explicit_and_idempotent(session: Ses
             .where(RoleAssignment.user_id == user.id)
         )
     )
-    assert {(role.product, role.name) for role in roles} == {
-        ("platform", "System Administrator")
-    }
+    assert {(role.product, role.name) for role in roles} == {("platform", "System Administrator")}
     platform_role = next(role for role in roles if role.product == "platform")
     assert platform_role.permission_policy == "all"
     platform_permission_codes = set(
@@ -50,9 +48,7 @@ def test_bootstrap_initial_administrator_is_explicit_and_idempotent(session: Ses
     assert set(platform_role.permission_codes) == platform_permission_codes
     assert session.scalar(select(func.count()).select_from(OutboxEvent)) == 2
     event = session.scalar(
-        select(OutboxEvent).where(
-            OutboxEvent.event_type == "platform.assignment.changed.v1"
-        )
+        select(OutboxEvent).where(OutboxEvent.event_type == "platform.assignment.changed.v1")
     )
     assert event is not None
     assert event.event_type == "platform.assignment.changed.v1"
@@ -72,9 +68,7 @@ def test_bootstrap_refuses_a_second_human_identity(session: Session) -> None:
     )
     session.commit()
 
-    with pytest.raises(
-        RuntimeError, match="an initial human administrator is already registered"
-    ):
+    with pytest.raises(RuntimeError, match="an initial human administrator is already registered"):
         bootstrap_initial_administrator(
             session,
             issuer="https://issuer.example",

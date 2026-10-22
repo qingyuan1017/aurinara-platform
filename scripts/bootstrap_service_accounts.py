@@ -91,10 +91,7 @@ def _register(
     if product == "aurinara-edc":
         permission_codes.extend(("edc.permission.sync", "edc.site.sync"))
     for code in permission_codes:
-        permission_product = (
-            "platform"
-            if code.startswith("platform.") else product
-        )
+        permission_product = "platform" if code.startswith("platform.") else product
         permission = session.get(Permission, code)
         if permission is None:
             permission = Permission(
