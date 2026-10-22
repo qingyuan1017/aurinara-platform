@@ -246,14 +246,39 @@ def test_pdf_annotation_optimistic_concurrency_and_history(session) -> None:
             page_number=1,
             geometry={"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.1},
             comment="Review",
+            style={
+                "font_family": "Times-Roman",
+                "font_size": 14,
+                "text_color": "#102030",
+                "fill_color": "#fef08a",
+                "border_color": "#ca8a04",
+                "opacity": 0.45,
+            },
         ),
         principal,
         actor,
     )
     updated = service.patch_annotation(
-        session, annotation.id, PdfAnnotationPatch(comment="Resolved"), 1, principal, actor
+        session,
+        annotation.id,
+        PdfAnnotationPatch(
+            comment="Resolved",
+            style={
+                "font_family": "Courier",
+                "font_size": 12,
+                "text_color": "#111827",
+                "fill_color": "#bfdbfe",
+                "border_color": "#2563eb",
+                "opacity": 0.25,
+            },
+        ),
+        1,
+        principal,
+        actor,
     )
     assert updated.revision == 2
+    assert updated.style["font_family"] == "Courier"
+    assert updated.style["fill_color"] == "#bfdbfe"
     with pytest.raises(Problem) as conflict:
         service.patch_annotation(
             session, annotation.id, PdfAnnotationPatch(comment="Stale"), 1, principal, actor
@@ -263,6 +288,13 @@ def test_pdf_annotation_optimistic_concurrency_and_history(session) -> None:
         "created",
         "updated",
     ]
+    latest = session.scalars(
+        select(RepositoryPdfAnnotationRevision).order_by(
+            RepositoryPdfAnnotationRevision.revision.desc()
+        )
+    ).first()
+    assert latest is not None
+    assert latest.snapshot["style"]["font_size"] == 12
 
 
 def test_onlyoffice_download_host_is_allowlisted(tmp_path: Path) -> None:

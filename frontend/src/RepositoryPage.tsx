@@ -1,5 +1,5 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Clock3, Download, File, Folder, FolderInput, History, MoreHorizontal, Plus, RefreshCw, RotateCcw, Search, Upload } from 'lucide-react'
+import { Archive, Clock3, Download, Eye, File, Folder, FolderInput, History, MoreHorizontal, Plus, RefreshCw, RotateCcw, Search, Upload, X } from 'lucide-react'
 import { api, ApiError, uploadNeutralFile, waitForRepositoryJob, type UploadProgress } from './api'
 import { RepositoryViewer } from './RepositoryViewer'
 import type { RepositoryNode, RepositoryVersion, Site, Study } from './types'
@@ -79,6 +79,18 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
     if (!selected || selected.kind !== 'file') { setVersions([]); return }
     void api.repositoryVersions(selected.id).then(setVersions).catch((error) => notify('error', message(error)))
   }, [selected, notify])
+
+  useEffect(() => {
+    if (!viewerOpen) return
+    const previousOverflow = document.body.style.overflow
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setViewerOpen(false) }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [viewerOpen])
 
   const scopedDestinations = useMemo(() => folders.filter((folder) => selected &&
     folder.id !== selected.id && folder.source_product === selected.source_product &&
@@ -167,13 +179,21 @@ export function RepositoryPage({ studies, notify }: { studies: Study[]; notify: 
       </section>
       <aside className="repository-detail">{selected ? <>
         <header><span className="repo-detail-icon">{selected.kind === 'folder' ? <Folder /> : <File />}</span><div><h2>{selected.display_name}</h2><p>{selected.source_product} · {selected.classification}</p></div><MoreHorizontal /></header>
-        <div className="repo-actions">{selected.capabilities.can_manage && <button className="secondary" onClick={() => void rename()}>Rename</button>}{selected.kind === 'file' && <button className="primary" onClick={() => void download()}><Download />Download</button>}{selected.kind === 'file' && selected.capabilities.can_preview && <button className="secondary" onClick={() => setViewerOpen((value) => !value)}>{viewerOpen ? 'Close preview' : 'Preview'}</button>}{selected.capabilities.can_manage && <button className="secondary" onClick={() => void archive()}>{selected.lifecycle_status === 'archived' ? <><RotateCcw />Restore</> : <><Archive />Archive</>}</button>}</div>
+        <div className="repo-actions">{selected.capabilities.can_manage && <button className="secondary" onClick={() => void rename()}>Rename</button>}{selected.kind === 'file' && <button className="primary" onClick={() => void download()}><Download />Download</button>}{selected.kind === 'file' && selected.capabilities.can_preview && <button className="secondary" onClick={() => setViewerOpen(true)}><Eye />Open preview</button>}{selected.capabilities.can_manage && <button className="secondary" onClick={() => void archive()}>{selected.lifecycle_status === 'archived' ? <><RotateCcw />Restore</> : <><Archive />Archive</>}</button>}</div>
         {selected.lifecycle_status === 'active' && selected.capabilities.can_manage && <label className="field"><span>Move to equivalent-scope folder</span><select value={selected.parent_id || ''} onChange={(event) => void move(event.target.value)}><option value="">Repository root</option>{scopedDestinations.map((folder) => <option key={folder.id} value={folder.id}>{folder.display_name}</option>)}</select></label>}
         <dl><dt>Type</dt><dd>{selected.source_resource_type.replaceAll('_', ' ')}</dd><dt>Module</dt><dd>{selected.module || '—'}</dd><dt>Scope</dt><dd>{selected.site_id ? siteNames.get(selected.site_id) || 'Unavailable site' : 'Study-wide'}</dd></dl>
         <details className="technical-details"><summary>Technical details</summary><dl><dt>Read permission</dt><dd className="mono">{selected.required_read_action}</dd><dt>Internal reference</dt><dd className="mono">{selected.source_resource_id || '—'}</dd></dl></details>
-        {selected.kind === 'file' && versions[0] && viewerOpen && <RepositoryViewer node={selected} version={versions[0]} onChanged={() => void load()} />}
         {selected.kind === 'file' && <section className="version-list"><h3><History />Version history</h3>{selected.capabilities.can_manage && selected.lifecycle_status === 'active' && <label className="replace-button"><Upload />New version<input hidden type="file" onChange={(event) => void upload(event, selected)} /></label>}{versions[0]?.capabilities.conversion_targets.map((target) => <button key={target} onClick={() => void convert(target)}>Convert to {target.toUpperCase()}</button>)}{versions.map((version) => <button key={version.id} onClick={() => void download(version)}><span>v{version.version_number}</span><small>{version.profile?.file_kind || version.media_type} · {version.profile?.processing_status || 'pending'} · {new Date(version.created_at).toLocaleString()} · {(version.size_bytes / 1024).toFixed(1)} KB</small><Download /></button>)}</section>}
       </> : <div className="empty"><FolderInput /><span>Select an entry to see details and versions.</span></div>}</aside>
     </div>
+    {viewerOpen && selected?.kind === 'file' && versions[0] && <div className="repository-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setViewerOpen(false) }}>
+      <section className="repository-preview-workspace" role="dialog" aria-modal="true" aria-label={`Preview ${selected.display_name}`}>
+        <header className="repository-preview-header">
+          <div className="repository-preview-title"><span className="repo-detail-icon"><File /></span><div><small>{versions[0].profile?.file_kind?.toUpperCase() || 'FILE'} · Version {versions[0].version_number}</small><h2>{selected.display_name}</h2></div></div>
+          <div className="repository-preview-actions"><span className={`repository-preview-status ${versions[0].profile?.processing_status || 'pending'}`}>{versions[0].profile?.processing_status || 'pending'}</span><button className="secondary" onClick={() => void download(versions[0])}><Download />Download</button><button className="icon secondary" aria-label="Close preview" onClick={() => setViewerOpen(false)}><X /></button></div>
+        </header>
+        <div className="repository-preview-stage"><RepositoryViewer node={selected} version={versions[0]} onChanged={() => void load()} /></div>
+      </section>
+    </div>}
   </div>
 }

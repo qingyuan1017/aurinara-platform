@@ -557,6 +557,7 @@ class RepositoryPdfAnnotation(Base):
     comment: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(64), nullable=False, default="comment")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    style: Mapped[dict[str, object]] = mapped_column(JsonType, nullable=False, default=dict)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_by: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
     updated_by: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)

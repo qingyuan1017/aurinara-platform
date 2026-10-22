@@ -1,6 +1,5 @@
 """HTTP contract for the central study Repository."""
 
-import io
 from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
 from uuid import UUID
@@ -798,16 +797,18 @@ def onlyoffice_content(
     session: Annotated[Session, Depends(get_session)],
     rich: Annotated[RichRepositoryService, Depends(get_rich_repository)],
 ) -> StreamingResponse:
-    data, media_type, filename = rich.office_content(session, session_id, token)
+    data, media_type, filename, size_bytes = rich.office_content(session, session_id, token)
     safe_name = filename.replace('"', "")
+    headers = {
+        "Content-Disposition": f'inline; filename="{safe_name}"',
+        "Accept-Ranges": "bytes",
+    }
+    if size_bytes is not None:
+        headers["Content-Length"] = str(size_bytes)
     return StreamingResponse(
-        io.BytesIO(data),
+        data,
         media_type=media_type,
-        headers={
-            "Content-Disposition": f'inline; filename="{safe_name}"',
-            "Content-Length": str(len(data)),
-            "Accept-Ranges": "bytes",
-        },
+        headers=headers,
     )
 
 

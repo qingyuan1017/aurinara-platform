@@ -631,6 +631,17 @@ class RepositoryJobResponse(BaseModel):
     completed_at: datetime | None
 
 
+class PdfAnnotationStyle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    font_family: Literal["Helvetica", "Times-Roman", "Courier"] = "Helvetica"
+    font_size: float = Field(default=10, ge=6, le=48)
+    text_color: str = Field(default="#1f2937", pattern=r"^#[0-9a-fA-F]{6}$")
+    fill_color: str = Field(default="#facc15", pattern=r"^#[0-9a-fA-F]{6}$")
+    border_color: str = Field(default="#d97706", pattern=r"^#[0-9a-fA-F]{6}$")
+    opacity: float = Field(default=0.32, ge=0.05, le=1)
+
+
 class PdfAnnotationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -640,6 +651,7 @@ class PdfAnnotationCreate(BaseModel):
     comment: str | None = Field(default=None, max_length=20_000)
     category: str = Field(default="comment", min_length=1, max_length=64)
     status: str = Field(default="open", min_length=1, max_length=32)
+    style: PdfAnnotationStyle = Field(default_factory=PdfAnnotationStyle)
 
 
 class PdfAnnotationPatch(BaseModel):
@@ -650,6 +662,7 @@ class PdfAnnotationPatch(BaseModel):
     comment: str | None = Field(default=None, max_length=20_000)
     category: str | None = Field(default=None, min_length=1, max_length=64)
     status: str | None = Field(default=None, min_length=1, max_length=32)
+    style: PdfAnnotationStyle | None = None
 
     @model_validator(mode="after")
     def contains_change(self) -> "PdfAnnotationPatch":
@@ -669,6 +682,7 @@ class PdfAnnotationResponse(BaseModel):
     comment: str | None
     category: str
     status: str
+    style: PdfAnnotationStyle
     revision: int
     created_by: UUID
     updated_by: UUID

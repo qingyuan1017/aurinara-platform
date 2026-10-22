@@ -747,6 +747,7 @@ class RichRepositoryService:
             comment=command.comment,
             category=command.category,
             status=command.status,
+            style=command.style.model_dump(),
             created_by=actor.id,
             updated_by=actor.id,
         )
@@ -771,7 +772,8 @@ class RichRepositoryService:
         if command.geometry is not None:
             self._validate_geometry(command.geometry)
         for field in command.model_fields_set:
-            setattr(annotation, field, getattr(command, field))
+            value = getattr(command, field)
+            setattr(annotation, field, value.model_dump() if field == "style" and value else value)
         annotation.revision += 1
         annotation.updated_by = actor.id
         annotation.updated_at = utc_now()
@@ -819,6 +821,7 @@ class RichRepositoryService:
 
     def _annotated_export(self, session: Session, job: RepositoryJob) -> dict[str, object]:
         from reportlab.lib.colors import Color
+        from reportlab.pdfbase.pdfmetrics import stringWidth
         from reportlab.pdfgen.canvas import Canvas
 
         version = session.get(RepositoryFileVersion, job.version_id)
@@ -855,12 +858,56 @@ class RichRepositoryService:
                     ) * height
                     w = float(geometry.get("width", 0)) * width
                     h = float(geometry.get("height", 0)) * height
-                    canvas.setFillColor(Color(1, 0.85, 0, alpha=0.3))
-                    canvas.rect(x, y, w, h, fill=1, stroke=0)
+                    style = item.style or {}
+
+                    def color(value: object, fallback: str, alpha: float = 1) -> Color:
+                        raw = value if isinstance(value, str) and len(value) == 7 else fallback
+                        try:
+                            return Color(
+                                int(raw[1:3], 16) / 255,
+                                int(raw[3:5], 16) / 255,
+                                int(raw[5:7], 16) / 255,
+                                alpha=alpha,
+                            )
+                        except ValueError:
+                            return Color(0, 0, 0, alpha=alpha)
+
+                    opacity = min(1.0, max(0.05, float(style.get("opacity", 0.32))))
+                    canvas.setFillColor(color(style.get("fill_color"), "#facc15", opacity))
+                    canvas.setStrokeColor(color(style.get("border_color"), "#d97706"))
+                    canvas.setLineWidth(1)
+                    canvas.rect(x, y, w, h, fill=1, stroke=1)
                     if item.comment:
-                        canvas.setFillColor(Color(0.2, 0.2, 0.2, alpha=1))
-                        canvas.setFont("Helvetica", 7)
-                        canvas.drawString(x, max(2, y - 8), item.comment[:120])
+                        family = str(style.get("font_family", "Helvetica"))
+                        if family not in {"Helvetica", "Times-Roman", "Courier"}:
+                            family = "Helvetica"
+                        font_size = min(48.0, max(6.0, float(style.get("font_size", 10))))
+                        canvas.setFillColor(color(style.get("text_color"), "#1f2937"))
+                        canvas.setFont(family, font_size)
+                        available = max(1.0, w - 6)
+                        words = item.comment.replace("\n", " \n ").split(" ")
+                        lines: list[str] = []
+                        current = ""
+                        for word in words:
+                            if word == "\n":
+                                if current:
+                                    lines.append(current)
+                                current = ""
+                                continue
+                            candidate = f"{current} {word}".strip()
+                            if current and stringWidth(candidate, family, font_size) > available:
+                                lines.append(current)
+                                current = word
+                            else:
+                                current = candidate
+                        if current:
+                            lines.append(current)
+                        baseline = y + h - font_size - 3
+                        for line in lines:
+                            if baseline < y + 2:
+                                break
+                            canvas.drawString(x + 3, baseline, line[:300])
+                            baseline -= font_size * 1.2
                 canvas.save()
                 overlay.seek(0)
                 page.merge_page(PdfReader(overlay).pages[0])
@@ -996,7 +1043,7 @@ class RichRepositoryService:
 
     def office_content(
         self, session: Session, session_id: UUID, token: str
-    ) -> tuple[Iterator[bytes], str, str]:
+    ) -> tuple[Iterator[bytes], str, str, int | None]:
         claims = self._decode_office_token(token, "content", session_id)
         office = session.get(RepositoryOfficeSession, session_id)
         if office is None or office.state != "active" or _utc(office.lease_expires_at) <= utc_now():
@@ -1008,7 +1055,12 @@ class RichRepositoryService:
         node = session.get(RepositoryNode, office.node_id)
         if version is None or stored is None or node is None:
             raise Problem(404, "office_source_missing", "The Office source is unavailable")
-        return self.storage.iter_bytes(stored.object_key), stored.media_type, node.display_name
+        return (
+            self.storage.iter_bytes(stored.object_key),
+            stored.media_type,
+            node.display_name,
+            stored.size_bytes,
+        )
 
     def office_callback(
         self, session: Session, session_id: UUID, token: str, payload: dict[str, object]
@@ -1249,6 +1301,7 @@ class RichRepositoryService:
             "comment": annotation.comment,
             "category": annotation.category,
             "status": annotation.status,
+            "style": annotation.style,
             "deleted": annotation.deleted_at is not None,
         }
 

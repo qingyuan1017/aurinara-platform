@@ -202,11 +202,21 @@ export interface PdfAnnotation {
   comment: string | null
   category: string
   status: string
+  style: PdfAnnotationStyle
   revision: number
   created_by: string
   updated_by: string
   created_at: string
   updated_at: string
+}
+
+export interface PdfAnnotationStyle {
+  font_family: 'Helvetica' | 'Times-Roman' | 'Courier'
+  font_size: number
+  text_color: string
+  fill_color: string
+  border_color: string
+  opacity: number
 }
 
 export interface TabularPreview {
