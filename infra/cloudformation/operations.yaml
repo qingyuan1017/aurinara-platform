@@ -143,6 +143,32 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
+  WorkspaceSyncFailures:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-workspace-sync-failures
+      Namespace: Aurinara Platform
+      MetricName: WorkspaceSyncFailures
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+  WorkspaceQuotaEvents:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aurinara-platform-${Environment}-workspace-quota-events
+      Namespace: Aurinara Platform
+      MetricName: WorkspaceQuotaEvents
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
   Dashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
@@ -152,7 +178,8 @@ Resources:
           {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{"title":"API","region":"${AWS::Region}","metrics":[["AWS/ApplicationELB","TargetResponseTime","LoadBalancer","${AlbFullName}",{"stat":"p95"}],[".","HTTPCode_Target_5XX_Count",".",".",{"stat":"Sum","yAxis":"right"}]]}},
           {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{"title":"Database","region":"${AWS::Region}","metrics":[["AWS/RDS","CPUUtilization","DBInstanceIdentifier","${DatabaseIdentifier}"],[".","DatabaseConnections",".","."]]}},
           {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{"title":"Outbox","region":"${AWS::Region}","metrics":[["Aurinara Platform","OutboxOldestEventSeconds","Environment","${Environment}"],[".","OutboxPublishFailures",".","."]]}},
-          {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"Repository and Office","region":"${AWS::Region}","metrics":[["Aurinara Platform","RepositoryJobBacklog","Environment","${Environment}"],[".","RepositoryOldestJobSeconds",".","."],[".","RepositoryPreviewFailures",".","."],[".","OnlyOfficeSaveFailures",".","."],[".","OnlyOfficeCallbackAuthFailures",".","."],[".","MalwareRejections",".","."]]}}
+          {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"Repository and Office","region":"${AWS::Region}","metrics":[["Aurinara Platform","RepositoryJobBacklog","Environment","${Environment}"],[".","RepositoryOldestJobSeconds",".","."],[".","RepositoryPreviewFailures",".","."],[".","OnlyOfficeSaveFailures",".","."],[".","OnlyOfficeCallbackAuthFailures",".","."],[".","MalwareRejections",".","."]]}},
+          {"type":"metric","x":0,"y":12,"width":12,"height":6,"properties":{"title":"Workspaces","region":"${AWS::Region}","metrics":[["Aurinara Platform","WorkspaceSyncFailures"],[".","WorkspaceQuotaEvents"]]}}
         ]}
   AuditTrail:
     Type: AWS::CloudTrail::Trail

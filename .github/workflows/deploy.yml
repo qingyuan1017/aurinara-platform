@@ -14,7 +14,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: staging
-    outputs: {image: '${{ steps.digest.outputs.image }}'}
+    outputs:
+      image: '${{ steps.digest.outputs.image }}'
+      workspace_image: '${{ steps.workspace_digest.outputs.image }}'
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
@@ -24,10 +26,17 @@ jobs:
       - run: docker buildx build --platform linux/amd64 --push -t "${{ vars.APPLICATION_REPOSITORY_URI || '730335504220.dkr.ecr.us-east-1.amazonaws.com/aurinara-platform/application' }}:${GITHUB_SHA}" .
       - id: digest
         run: echo "image=${{ vars.APPLICATION_REPOSITORY_URI || '730335504220.dkr.ecr.us-east-1.amazonaws.com/aurinara-platform/application' }}@$(aws ecr describe-images --repository-name aurinara-platform/application --image-ids imageTag=${GITHUB_SHA} --query 'imageDetails[0].imageDigest' --output text)" >> "$GITHUB_OUTPUT"
+      - run: docker buildx build --platform linux/amd64 --push -f Dockerfile.workspace -t "${{ vars.APPLICATION_REPOSITORY_URI || '730335504220.dkr.ecr.us-east-1.amazonaws.com/aurinara-platform/application' }}:workspace-${GITHUB_SHA}" .
+      - id: workspace_digest
+        run: echo "image=${{ vars.APPLICATION_REPOSITORY_URI || '730335504220.dkr.ecr.us-east-1.amazonaws.com/aurinara-platform/application' }}@$(aws ecr describe-images --repository-name aurinara-platform/application --image-ids imageTag=workspace-${GITHUB_SHA} --query 'imageDetails[0].imageDigest' --output text)" >> "$GITHUB_OUTPUT"
       - uses: anchore/sbom-action@v0
         with: {image: '${{ steps.digest.outputs.image }}', artifact-name: platform-sbom.spdx.json}
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with: {image-ref: '${{ steps.digest.outputs.image }}', severity: 'CRITICAL,HIGH', exit-code: '1', ignore-unfixed: true}
+      - uses: anchore/sbom-action@v0
+        with: {image: '${{ steps.workspace_digest.outputs.image }}', artifact-name: workspace-sbom.spdx.json}
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: {image-ref: '${{ steps.workspace_digest.outputs.image }}', severity: 'CRITICAL,HIGH', exit-code: '1', ignore-unfixed: true}
   staging:
     needs: build
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_staging }}
@@ -47,6 +56,7 @@ jobs:
       - name: Package and deploy foundation
         env:
           APPLICATION_IMAGE: ${{ needs.build.outputs.image }}
+          WORKSPACE_IMAGE: ${{ needs.build.outputs.workspace_image }}
           BASE_DOMAIN: ${{ vars.BASE_DOMAIN || 'aurinara.com' }}
           DNS_PROVIDER: ${{ vars.DNS_PROVIDER || 'cloudflare' }}
           HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
@@ -128,6 +138,7 @@ jobs:
       - name: Package and deploy foundation
         env:
           APPLICATION_IMAGE: ${{ needs.build.outputs.image }}
+          WORKSPACE_IMAGE: ${{ needs.build.outputs.workspace_image }}
           BASE_DOMAIN: ${{ vars.BASE_DOMAIN || 'aurinara.com' }}
           DNS_PROVIDER: ${{ vars.DNS_PROVIDER || 'cloudflare' }}
           HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}

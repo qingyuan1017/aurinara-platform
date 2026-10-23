@@ -69,6 +69,16 @@ Resources:
       GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
       KmsKeyId: !Ref DataKey
 
+  WorkspaceCallbackSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub aurinara-platform/${Environment}/workspace-callback
+      Description: Signing secret for workspace sync sidecar callbacks
+      GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
+      KmsKeyId: !Ref DataKey
+
   OnlyOfficeFileSystem:
     Type: AWS::EFS::FileSystem
     DeletionPolicy: Retain
@@ -236,6 +246,49 @@ Resources:
             Resource: [!Sub '${ObjectBucket.Arn}', !Sub '${ObjectBucket.Arn}/*']
             Condition: {Bool: {'aws:SecureTransport': false}}
 
+  WorkspaceBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'aurinara-platform-${Environment}-workspaces-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration: {Status: Enabled}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref DataKey}
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration: *PublicBlock
+      LifecycleConfiguration:
+        Rules:
+          - Id: WorkspaceNoncurrentVersions
+            Status: Enabled
+            Prefix: workspaces/
+            NoncurrentVersionExpiration: {NoncurrentDays: 30}
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+          - Id: SessionEnvironmentCleanup
+            Status: Enabled
+            Prefix: session-env/
+            ExpirationInDays: 1
+            NoncurrentVersionExpiration: {NoncurrentDays: 1}
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+          - Id: SessionEnvironmentDeleteMarkers
+            Status: Enabled
+            Prefix: session-env/
+            ExpiredObjectDeleteMarker: true
+  WorkspaceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WorkspaceBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!Sub '${WorkspaceBucket.Arn}', !Sub '${WorkspaceBucket.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': false}}
+
   FrontendBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -299,7 +352,7 @@ Resources:
       BackupSelection:
         SelectionName: objects
         IamRoleArn: !GetAtt BackupRole.Arn
-        Resources: [!GetAtt ObjectBucket.Arn, !GetAtt OnlyOfficeFileSystem.Arn]
+        Resources: [!GetAtt ObjectBucket.Arn, !GetAtt WorkspaceBucket.Arn, !GetAtt OnlyOfficeFileSystem.Arn]
 
 Outputs:
   DataKeyArn: {Value: !GetAtt DataKey.Arn}
@@ -307,6 +360,8 @@ Outputs:
   DatabaseIdentifier: {Value: !Ref Database}
   DatabaseSecretArn: {Value: !Ref DatabaseSecret}
   ObjectBucketName: {Value: !Ref ObjectBucket}
+  WorkspaceBucketName: {Value: !Ref WorkspaceBucket}
+  WorkspaceCallbackSecretArn: {Value: !Ref WorkspaceCallbackSecret}
   FrontendBucketName: {Value: !Ref FrontendBucket}
   FrontendBucketRegionalDomainName: {Value: !GetAtt FrontendBucket.RegionalDomainName}
   AccessLogBucketName: {Value: !Ref AccessLogBucket}

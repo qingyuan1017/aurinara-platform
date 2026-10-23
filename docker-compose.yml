@@ -65,6 +65,8 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment: &application-environment
       ENVIRONMENT: development
+      WORKSPACE_ENABLED: "true"
+      WORKSPACE_RUNTIME_MODE: static
       DATABASE_URL: postgresql+psycopg://aurinara_platform:aurinara_platform@postgres:5432/aurinara_platform
       EVENTBRIDGE_BUS_NAME: aurinara-platform
       EVENTBRIDGE_ENDPOINT_URL: http://localstack:4566
@@ -137,6 +139,33 @@ services:
       retries: 20
     restart: unless-stopped
 
+  workspace-platform:
+    profiles: [workspace]
+    build:
+      context: .
+      dockerfile: Dockerfile.workspace
+    environment: {WORKSPACE_ID: local-platform, WORKSPACE_SESSION_SECONDS: "86400"}
+    ports: ["127.0.0.1:18080:8080"]
+    volumes: [platform_workspace_data:/workspace]
+
+  workspace-aurinara:
+    profiles: [workspace]
+    build:
+      context: .
+      dockerfile: Dockerfile.workspace
+    environment: {WORKSPACE_ID: local-aurinara, WORKSPACE_SESSION_SECONDS: "86400"}
+    ports: ["127.0.0.1:18081:8080"]
+    volumes: [aurinara_workspace_data:/workspace]
+
+  workspace-edc:
+    profiles: [workspace]
+    build:
+      context: .
+      dockerfile: Dockerfile.workspace
+    environment: {WORKSPACE_ID: local-edc, WORKSPACE_SESSION_SECONDS: "86400"}
+    ports: ["127.0.0.1:18082:8080"]
+    volumes: [edc_workspace_data:/workspace]
+
 volumes:
   platform_postgres_data:
   platform_object_data:
@@ -146,3 +175,6 @@ volumes:
   platform_onlyoffice_logs:
   platform_onlyoffice_lib:
   platform_onlyoffice_database:
+  platform_workspace_data:
+  aurinara_workspace_data:
+  edc_workspace_data:

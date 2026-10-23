@@ -14,6 +14,7 @@ Parameters:
   CognitoFromAddress: {Type: String, Default: ''}
   ApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
   MigrationApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
+  WorkspaceImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
   OnlyOfficeImage:
     Type: String
     Default: onlyoffice/documentserver:9.3.1.2@sha256:290a0a1406a485acc8a6bc20418ac7158c5eec78b4844c218f8f975a9800ddbc
@@ -113,16 +114,20 @@ Resources:
         ServicesEnabled: !Ref ServicesEnabled
         ApplicationImage: !Ref ApplicationImage
         MigrationApplicationImage: !Ref MigrationApplicationImage
+        WorkspaceImage: !Ref WorkspaceImage
         VpcId: !GetAtt Network.Outputs.VpcId
         AppSubnetIds: !GetAtt Network.Outputs.AppSubnetIds
         AlbSecurityGroupId: !GetAtt Network.Outputs.AlbSecurityGroupId
         ApiSecurityGroupId: !GetAtt Network.Outputs.ApiSecurityGroupId
+        WorkspaceSecurityGroupId: !GetAtt Network.Outputs.WorkspaceSecurityGroupId
         WorkerSecurityGroupId: !GetAtt Network.Outputs.WorkerSecurityGroupId
         OfficeSecurityGroupId: !GetAtt Network.Outputs.OfficeSecurityGroupId
         DatabaseEndpoint: !GetAtt Data.Outputs.DatabaseEndpoint
         DatabaseSecretArn: !GetAtt Data.Outputs.DatabaseSecretArn
         DataKeyArn: !GetAtt Data.Outputs.DataKeyArn
         ObjectBucketName: !GetAtt Data.Outputs.ObjectBucketName
+        WorkspaceBucketName: !GetAtt Data.Outputs.WorkspaceBucketName
+        WorkspaceCallbackSecretArn: !GetAtt Data.Outputs.WorkspaceCallbackSecretArn
         EventBusName: !GetAtt Data.Outputs.EventBusName
         JwtIssuer: !GetAtt Identity.Outputs.JwtIssuer
         JwtJwksUrl: !GetAtt Identity.Outputs.JwtJwksUrl
@@ -242,6 +247,7 @@ Outputs:
   OfficeCloudFrontDistributionDomainName: {Value: !GetAtt Edge.Outputs.OfficeDistributionDomainName}
   FrontendBucketName: {Value: !GetAtt Data.Outputs.FrontendBucketName}
   ObjectBucketName: {Value: !GetAtt Data.Outputs.ObjectBucketName}
+  WorkspaceBucketName: {Value: !GetAtt Data.Outputs.WorkspaceBucketName}
   EventBusName: {Value: !GetAtt Data.Outputs.EventBusName}
   EventBusArn: {Value: !GetAtt Data.Outputs.EventBusArn}
   PlatformPrivateLinkServiceName: {Condition: IsStandard, Value: !GetAtt Compute.Outputs.PrivateLinkServiceName}
@@ -277,6 +283,7 @@ Outputs:
   CognitoDomain: {Value: !GetAtt Identity.Outputs.CognitoDomain}
   ClusterName: {Value: !GetAtt Compute.Outputs.ClusterName}
   MigrationTaskDefinitionArn: {Value: !GetAtt Compute.Outputs.MigrationTaskDefinitionArn}
+  WorkspaceTaskDefinitionArn: {Value: !GetAtt Compute.Outputs.WorkspaceTaskDefinitionArn}
   VpcId: {Value: !GetAtt Network.Outputs.VpcId}
   VpcCidr: {Value: !GetAtt Network.Outputs.VpcCidr}
   AppSubnetIds: {Value: !GetAtt Network.Outputs.AppSubnetIds}

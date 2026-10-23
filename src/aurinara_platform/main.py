@@ -36,6 +36,10 @@ from aurinara_platform.storage import (
     ObjectStorage,
     S3ObjectStorage,
 )
+from aurinara_platform.workspace import WorkspaceProxyAuthorizer, WorkspaceService
+from aurinara_platform.workspace_api import internal_router as workspace_internal_router
+from aurinara_platform.workspace_api import router as workspace_router
+from aurinara_platform.workspace_runtime import WorkspaceRuntime, create_workspace_runtime
 
 
 def create_app(
@@ -45,6 +49,7 @@ def create_app(
     token_verifier: TokenVerifier | None = None,
     object_storage: ObjectStorage | None = None,
     malware_scanner: MalwareScanner | None = None,
+    workspace_runtime: WorkspaceRuntime | None = None,
 ) -> FastAPI:
     resolved = settings or get_settings()
     authorization = AuthorizationService(resolved)
@@ -79,6 +84,12 @@ def create_app(
         resolved.playground_runtime_timeout_seconds
     )
     app.state.playground_memory = AgentCoreMemoryClient()
+    app.state.workspace_service = WorkspaceService(
+        resolved, workspace_runtime or create_workspace_runtime(resolved)
+    )
+    app.state.workspace_proxy_authorizer = WorkspaceProxyAuthorizer(
+        app.state.workspace_service, resolved.workspace_proxy_cache_seconds
+    )
 
     app.add_middleware(
         CORSMiddleware,
@@ -109,6 +120,8 @@ def create_app(
     app.include_router(router, prefix=resolved.api_prefix)
     app.include_router(repository_router, prefix=resolved.api_prefix)
     app.include_router(playground_router, prefix=resolved.api_prefix)
+    app.include_router(workspace_router, prefix=resolved.api_prefix)
+    app.include_router(workspace_internal_router, prefix=resolved.api_prefix)
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:

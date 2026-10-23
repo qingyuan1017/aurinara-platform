@@ -68,6 +68,78 @@ class User(Base):
     )
 
 
+class Workspace(Base):
+    """One persistent personal workspace for a user in a product."""
+
+    __tablename__ = "workspaces"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "product", name="uq_workspaces_owner_product"),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'stopping', 'stopped', 'failed', 'expired')",
+            name="ck_workspaces_status",
+        ),
+        CheckConstraint(
+            "sync_state IN ('pending', 'syncing', 'synced', 'quota_exceeded', 'failed')",
+            name="ck_workspaces_sync_state",
+        ),
+        CheckConstraint("usage_bytes >= 0", name="ck_workspaces_usage_bytes"),
+        Index("ix_workspaces_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    owner_user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    product: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="stopped")
+    sync_state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    usage_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    task_arn: Mapped[str | None] = mapped_column(String(1024))
+    target_url: Mapped[str | None] = mapped_column(String(1024))
+    storage_prefix: Mapped[str] = mapped_column(String(1024), nullable=False)
+    environment_file_key: Mapped[str | None] = mapped_column(String(1024))
+    callback_token_sha256: Mapped[str | None] = mapped_column(String(64))
+    session_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    session_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_code: Mapped[str | None] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class WorkspaceLaunchGrant(Base):
+    __tablename__ = "workspace_launch_grants"
+    __table_args__ = (Index("ix_workspace_launch_grants_token", "token_sha256", unique=True),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    token_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class WorkspaceProxySession(Base):
+    __tablename__ = "workspace_proxy_sessions"
+    __table_args__ = (Index("ix_workspace_proxy_sessions_token", "token_sha256", unique=True),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    token_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class PlaygroundAgent(Base):
     __tablename__ = "playground_agents"
     __table_args__ = (

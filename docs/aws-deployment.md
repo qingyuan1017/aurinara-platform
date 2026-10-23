@@ -88,12 +88,42 @@ variable.
 
 ## Release flow
 
-Merges to `main` build one immutable image, generate an SBOM, scan the image,
-and deploy its digest to production after approval. A manual run with
+Merges to `main` build immutable application and workspace images, generate an
+SBOM and vulnerability scan for each, and deploy their digests to production after approval. A manual run with
 `deploy_staging=true` deploys staging first. The workflow creates infrastructure
 with ECS services at zero, runs Alembic as a one-off task, activates API and publisher
 services, reconciles the public Cloudflare CNAME, publishes the SPA, and runs a
 health check. Production takes an RDS snapshot before the update.
+
+### Personal workspaces
+
+Platform owns the shared workspace control plane for all three products. Each
+eligible user receives one retained 5 GB workspace per product. An active
+session is a private, non-root Fargate task with an unauthenticated code-server
+container and a separate synchronization sidecar. Only the API security group
+may reach port 8080; task egress is limited to VPC DNS and HTTPS.
+
+The IDE container has no task role. Platform assumes the dedicated sync role
+with an inline policy restricted to the user's generated S3 prefix and delivers
+temporary credentials only to the sidecar through a per-run encrypted S3
+environment file. The file is removed after the task reaches `RUNNING` and is
+also covered by one-day lifecycle cleanup. Workspace data is kept in the
+retained, KMS-encrypted, versioned workspace bucket; noncurrent data versions
+expire after 30 days.
+
+Sessions have a two-hour hard limit, synchronize every minute, and allow 120
+seconds for the final upload. The API limits each environment to ten active
+workspace tasks by default. The browser receives only a single-use, 60-second
+launch grant; the proxy exchanges it for a secure path-scoped HTTP-only cookie.
+Consumer frontends deploy only after the Platform migration and workspace
+runtime have been verified.
+
+For local development, start the three loopback-only code-server instances and
+their separate named volumes with:
+
+```bash
+docker compose --profile workspace up -d workspace-platform workspace-aurinara workspace-edc
+```
 
 In the `standard` profile the workflow also publishes the PrivateLink ownership
 TXT record and waits for AWS verification. Verify this before starting standard

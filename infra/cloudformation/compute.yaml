@@ -7,16 +7,20 @@ Parameters:
   ServicesEnabled: {Type: String, AllowedValues: ['true', 'false'], Default: 'false'}
   ApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
   MigrationApplicationImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
+  WorkspaceImage: {Type: String, AllowedPattern: '^.+@sha256:[0-9a-f]{64}$'}
   VpcId: {Type: AWS::EC2::VPC::Id}
   AppSubnetIds: {Type: List<AWS::EC2::Subnet::Id>}
   AlbSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
   ApiSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
+  WorkspaceSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
   WorkerSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
   OfficeSecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
   DatabaseEndpoint: {Type: String}
   DatabaseSecretArn: {Type: String}
   DataKeyArn: {Type: String}
   ObjectBucketName: {Type: String}
+  WorkspaceBucketName: {Type: String}
+  WorkspaceCallbackSecretArn: {Type: String}
   EventBusName: {Type: String}
   JwtIssuer: {Type: String}
   JwtJwksUrl: {Type: String}
@@ -77,6 +81,28 @@ Resources:
       LogGroupName: !Sub /aurinara-platform/${Environment}/application
       RetentionInDays: !If [IsBudget, 30, !If [IsProduction, 365, 90]]
       KmsKeyId: !Ref DataKeyArn
+  WorkspaceLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aurinara-platform/${Environment}/workspaces
+      RetentionInDays: !If [IsBudget, 30, !If [IsProduction, 365, 90]]
+      KmsKeyId: !Ref DataKeyArn
+  WorkspaceSyncFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref WorkspaceLogGroup
+      FilterPattern: '{ $.event = "workspace_sync" && $.state = "failed" }'
+      MetricTransformations:
+        - {MetricNamespace: Aurinara Platform, MetricName: WorkspaceSyncFailures, MetricValue: '1', DefaultValue: 0, Unit: Count}
+  WorkspaceQuotaMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref WorkspaceLogGroup
+      FilterPattern: '{ $.event = "workspace_sync" && $.state = "quota_exceeded" }'
+      MetricTransformations:
+        - {MetricNamespace: Aurinara Platform, MetricName: WorkspaceQuotaEvents, MetricValue: '1', DefaultValue: 0, Unit: Count}
   TaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -93,8 +119,8 @@ Resources:
                 Action: 'secretsmanager:GetSecretValue'
                 Resource: !If
                   - HasMalwareScanner
-                  - [!Ref DatabaseSecretArn, !Ref MalwareScannerTokenSecretArn, !Ref OnlyOfficeJwtSecretArn]
-                  - [!Ref DatabaseSecretArn, !Ref OnlyOfficeJwtSecretArn]
+                  - [!Ref DatabaseSecretArn, !Ref MalwareScannerTokenSecretArn, !Ref OnlyOfficeJwtSecretArn, !Ref WorkspaceCallbackSecretArn]
+                  - [!Ref DatabaseSecretArn, !Ref OnlyOfficeJwtSecretArn, !Ref WorkspaceCallbackSecretArn]
               - {Effect: Allow, Action: ['kms:Decrypt', 'kms:DescribeKey'], Resource: !Ref DataKeyArn}
   ApplicationTaskRole:
     Type: AWS::IAM::Role
@@ -121,6 +147,47 @@ Resources:
               - Effect: Allow
                 Action: [bedrock-agentcore:ListEvents, bedrock-agentcore:ListMemories]
                 Resource: '*'
+
+  WorkspaceTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy]
+      Policies:
+        - PolicyName: workspace-session-environment
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${WorkspaceBucketName}/session-env/*'
+              - {Effect: Allow, Action: ['kms:Decrypt', 'kms:DescribeKey'], Resource: !Ref DataKeyArn}
+
+  WorkspaceSyncRole:
+    Type: AWS::IAM::Role
+    Properties:
+      MaxSessionDuration: 10800
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {AWS: !GetAtt ApplicationTaskRole.Arn}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: workspace-persistence
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${WorkspaceBucketName}'
+                Condition: {StringLike: {'s3:prefix': ['workspaces/*']}}
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:AbortMultipartUpload, s3:ListMultipartUploadParts]
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${WorkspaceBucketName}/workspaces/*'
+              - {Effect: Allow, Action: ['kms:Decrypt', 'kms:Encrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'], Resource: !Ref DataKeyArn}
 
   InternalLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -221,6 +288,80 @@ Resources:
       ServiceId: !Ref EndpointService
       AllowedPrincipals: [!Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root']
 
+  WorkspaceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub aurinara-platform-${Environment}-workspace
+      Cpu: '1024'
+      Memory: '2048'
+      EphemeralStorage: {SizeInGiB: 20}
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt WorkspaceTaskExecutionRole.Arn
+      RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
+      Volumes: [{Name: workspace-data}]
+      ContainerDefinitions:
+        - Name: workspace-sync
+          Image: !Ref WorkspaceImage
+          Command: [workspace-sync]
+          Essential: true
+          User: coder
+          Cpu: 128
+          MemoryReservation: 256
+          StopTimeout: 120
+          MountPoints: [{SourceVolume: workspace-data, ContainerPath: /workspace, ReadOnly: false}]
+          HealthCheck:
+            Command: [CMD-SHELL, 'test -f /workspace/.aurinara-ready || exit 1']
+            Interval: 10
+            Timeout: 5
+            Retries: 12
+            StartPeriod: 10
+          LinuxParameters: {InitProcessEnabled: true, Capabilities: {Drop: [ALL]}}
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref WorkspaceLogGroup, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: sync}}
+        - Name: workspace-ide
+          Image: !Ref WorkspaceImage
+          Command: [workspace-ide]
+          Essential: true
+          User: coder
+          Cpu: 896
+          MemoryReservation: 1536
+          StopTimeout: 120
+          DependsOn: [{ContainerName: workspace-sync, Condition: HEALTHY}]
+          PortMappings: [{ContainerPort: 8080, Protocol: tcp}]
+          MountPoints: [{SourceVolume: workspace-data, ContainerPath: /workspace, ReadOnly: false}]
+          HealthCheck:
+            Command: [CMD-SHELL, 'curl -fsS http://localhost:8080/healthz || exit 1']
+            Interval: 30
+            Timeout: 5
+            Retries: 5
+            StartPeriod: 60
+          LinuxParameters: {InitProcessEnabled: true, Capabilities: {Drop: [ALL]}}
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref WorkspaceLogGroup, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: ide}}
+
+  WorkspaceControlPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: workspace-control
+      Roles: [!Ref ApplicationTaskRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - {Effect: Allow, Action: ecs:RunTask, Resource: !Ref WorkspaceTaskDefinition}
+          - Effect: Allow
+            Action: [ecs:DescribeTasks, ecs:StopTask, ecs:ListTasks]
+            Resource: '*'
+            Condition: {ArnEquals: {'ecs:cluster': !GetAtt Cluster.Arn}}
+          - Effect: Allow
+            Action: ecs:TagResource
+            Resource: '*'
+            Condition: {StringEquals: {'ecs:CreateAction': RunTask}}
+          - {Effect: Allow, Action: iam:PassRole, Resource: !GetAtt WorkspaceTaskExecutionRole.Arn}
+          - {Effect: Allow, Action: sts:AssumeRole, Resource: !GetAtt WorkspaceSyncRole.Arn}
+          - Effect: Allow
+            Action: [s3:PutObject, s3:DeleteObject]
+            Resource: !Sub 'arn:${AWS::Partition}:s3:::${WorkspaceBucketName}/session-env/*'
+          - {Effect: Allow, Action: ['kms:Decrypt', 'kms:Encrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'], Resource: !Ref DataKeyArn}
+
   ApiTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -256,6 +397,27 @@ Resources:
             - {Name: OIDC_USER_AUDIENCES, Value: !Ref UserAudiences}
             - Name: PLAYGROUND_PRODUCT_AUDIENCES
               Value: !Sub 'platform=${PlatformSpaClientId};aurinara=${AurinaraSpaClientId};aurinara-edc=${EdcSpaClientId}'
+            - {Name: WORKSPACE_ENABLED, Value: 'true'}
+            - {Name: WORKSPACE_RUNTIME_MODE, Value: ecs}
+            - Name: WORKSPACE_PRODUCT_AUDIENCES
+              Value: !Sub 'platform=${PlatformSpaClientId};aurinara=${AurinaraSpaClientId};aurinara-edc=${EdcSpaClientId}'
+            - {Name: WORKSPACE_PUBLIC_BASE_URL, Value: !Ref PlatformPublicUrl}
+            - {Name: WORKSPACE_CALLBACK_BASE_URL, Value: !Ref PlatformPublicUrl}
+            - {Name: WORKSPACE_CLUSTER, Value: !Ref Cluster}
+            - {Name: WORKSPACE_TASK_DEFINITION, Value: !Ref WorkspaceTaskDefinition}
+            - {Name: WORKSPACE_TASK_FAMILY, Value: !Sub 'aurinara-platform-${Environment}-workspace'}
+            - {Name: WORKSPACE_SUBNET_IDS, Value: !Join [',', !Ref AppSubnetIds]}
+            - {Name: WORKSPACE_SECURITY_GROUP_ID, Value: !Ref WorkspaceSecurityGroupId}
+            - {Name: WORKSPACE_BUCKET, Value: !Ref WorkspaceBucketName}
+            - {Name: WORKSPACE_SYNC_ROLE_ARN, Value: !GetAtt WorkspaceSyncRole.Arn}
+            - {Name: WORKSPACE_REGION, Value: !Ref AWS::Region}
+            - {Name: WORKSPACE_SESSION_SECONDS, Value: '7200'}
+            - {Name: WORKSPACE_SYNC_CREDENTIAL_SECONDS, Value: '8100'}
+            - {Name: WORKSPACE_LAUNCH_GRANT_SECONDS, Value: '60'}
+            - {Name: WORKSPACE_PROXY_CACHE_SECONDS, Value: '15'}
+            - {Name: WORKSPACE_MAX_RUNNING, Value: '10'}
+            - {Name: WORKSPACE_QUOTA_BYTES, Value: '5368709120'}
+            - {Name: WORKSPACE_SYNC_INTERVAL_SECONDS, Value: '60'}
             - {Name: OIDC_SERVICE_CLIENT_IDS, Value: !Ref ServiceClientIds}
             - {Name: OIDC_SERVICE_SCOPE, Value: aurinara-platform/service}
             - {Name: OBJECT_STORE_ENDPOINT, Value: ''}
@@ -284,6 +446,7 @@ Resources:
           Secrets: &ApplicationSecrets
             - {Name: DATABASE_PASSWORD, ValueFrom: !Sub '${DatabaseSecretArn}:password::'}
             - {Name: ONLYOFFICE_JWT_SECRET, ValueFrom: !Ref OnlyOfficeJwtSecretArn}
+            - {Name: WORKSPACE_CALLBACK_SECRET, ValueFrom: !Ref WorkspaceCallbackSecretArn}
             - !If
               - HasMalwareScanner
               - {Name: MALWARE_SCANNER_TOKEN, ValueFrom: !Ref MalwareScannerTokenSecretArn}
@@ -516,6 +679,8 @@ Outputs:
   RepositoryWorkerServiceName: {Value: !GetAtt RepositoryWorkerService.Name}
   OnlyOfficeServiceName: {Value: !GetAtt OnlyOfficeService.Name}
   MigrationTaskDefinitionArn: {Value: !Ref MigrationTaskDefinition}
+  WorkspaceTaskDefinitionArn: {Value: !Ref WorkspaceTaskDefinition}
+  WorkspaceSyncRoleArn: {Value: !GetAtt WorkspaceSyncRole.Arn}
   AlbArn: {Value: !Ref InternalLoadBalancer}
   AlbDnsName: {Value: !GetAtt InternalLoadBalancer.DNSName}
   AlbFullName: {Value: !GetAtt InternalLoadBalancer.LoadBalancerFullName}

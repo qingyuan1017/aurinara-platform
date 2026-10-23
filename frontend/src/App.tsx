@@ -2,7 +2,7 @@ import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 
 import {
   Activity, Archive, Boxes, Check, ChevronDown, ChevronRight, CircleUserRound, Database, FolderKanban,
   Bot, Gauge, KeyRound, LogOut, Menu, ChevronLeft, Plus, RefreshCw, Search, Settings2,
-  ShieldCheck, X, XCircle,
+  ShieldCheck, SquareTerminal, X, XCircle,
 } from 'lucide-react'
 import { api, ApiError } from './api'
 import { claims, clearToken, completeLogin, getToken, isOidcConfigured, startLogin } from './auth'
@@ -15,12 +15,14 @@ import { AccessManagement } from './AccessManagement'
 import { ThemeToggle } from './theme'
 import { PlaygroundPage } from './PlaygroundPage'
 import { AgentCatalogPage } from './AgentCatalogPage'
+import { WorkspacePage } from './WorkspacePage'
 
-type Page = 'overview' | 'repository' | 'playground' | 'agent-catalog' | 'studies' | 'roles' | 'access' | 'users'
+type Page = 'overview' | 'repository' | 'workspace' | 'playground' | 'agent-catalog' | 'studies' | 'roles' | 'access' | 'users'
 
 const nav: { id: Page; label: string; icon: typeof Gauge }[] = [
   { id: 'overview', label: 'Overview', icon: Gauge },
   { id: 'repository', label: 'Repository', icon: FolderKanban },
+  { id: 'workspace', label: 'Workspace', icon: SquareTerminal },
   { id: 'playground', label: 'Playground', icon: Bot },
   { id: 'agent-catalog', label: 'Agent catalog', icon: Settings2 },
   { id: 'studies', label: 'Study registry', icon: Database },
@@ -114,6 +116,7 @@ export function App() {
         <div className="content">
           {page === 'overview' && <Overview user={user} studies={studies} onNavigate={selectPage} />}
           {page === 'repository' && <RepositoryPage studies={studies} notify={notify} />}
+          {page === 'workspace' && <WorkspacePage />}
           {page === 'playground' && <PlaygroundPage />}
           {page === 'agent-catalog' && <AgentCatalogPage />}
           {page === 'studies' && <Studies studies={studies} setStudies={setStudies} notify={notify} />}

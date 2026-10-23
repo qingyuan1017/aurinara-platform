@@ -139,6 +139,17 @@ Resources:
       GroupDescription: Aurinara Platform API
       VpcId: !Ref Vpc
       SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 8000, ToPort: 8000, SourceSecurityGroupId: !Ref AlbSecurityGroup}]
+  WorkspaceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Private Aurinara workspace runtimes
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 8080, ToPort: 8080, SourceSecurityGroupId: !Ref ApiSecurityGroup}
+      SecurityGroupEgress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: udp, FromPort: 53, ToPort: 53, CidrIp: !Ref VpcCidr}
+        - {IpProtocol: tcp, FromPort: 53, ToPort: 53, CidrIp: !Ref VpcCidr}
   WorkerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties: {GroupDescription: Aurinara Platform clinical workers, VpcId: !Ref Vpc}
@@ -243,6 +254,7 @@ Outputs:
   PublicSubnetIds: {Value: !Join [',', [!Ref PublicSubnetA, !Ref PublicSubnetB]]}
   AlbSecurityGroupId: {Value: !Ref AlbSecurityGroup}
   ApiSecurityGroupId: {Value: !Ref ApiSecurityGroup}
+  WorkspaceSecurityGroupId: {Value: !Ref WorkspaceSecurityGroup}
   WorkerSecurityGroupId: {Value: !Ref WorkerSecurityGroup}
   OfficeSecurityGroupId: {Value: !Ref OfficeSecurityGroup}
   RunnerSecurityGroupId: {Value: !Ref RunnerSecurityGroup}
