@@ -64,7 +64,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Name: !Sub aurinara-platform/${Environment}/onlyoffice-jwt
       Description: JWT signing secret shared by Platform and ONLYOFFICE
       GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
       KmsKeyId: !Ref DataKey
@@ -74,7 +73,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Name: !Sub aurinara-platform/${Environment}/workspace-callback
       Description: Signing secret for workspace sync sidecar callbacks
       GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
       KmsKeyId: !Ref DataKey
@@ -251,7 +249,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub 'aurinara-platform-${Environment}-workspaces-${AWS::AccountId}-${AWS::Region}'
       VersioningConfiguration: {Status: Enabled}
       BucketEncryption:
         ServerSideEncryptionConfiguration:
