@@ -2,13 +2,14 @@
 set -euo pipefail
 
 workspace_dir=${WORKSPACE_DIR:-/workspace}
+state_dir=${WORKSPACE_STATE_DIR:-$workspace_dir/.aurinara}
 session_seconds=${WORKSPACE_SESSION_SECONDS:-7200}
 wait_for_sync=${WORKSPACE_WAIT_FOR_SYNC:-true}
 ready_file="$workspace_dir/.aurinara-ready"
 
 mkdir -p \
-  "$workspace_dir/.aurinara/code-server/user-data" \
-  "$workspace_dir/.aurinara/code-server/extensions"
+  "$state_dir/code-server/user-data" \
+  "$state_dir/code-server/extensions"
 
 # ECS waits for the sync sidecar's initial restore. Static local development
 # uses a named volume directly and intentionally has no sync sidecar.
@@ -20,11 +21,15 @@ if [[ "$wait_for_sync" == true ]]; then
   [[ -f "$ready_file" ]] || exit 1
 fi
 
+# Docker Desktop bind mounts can report a different owner than the non-root
+# container user. Trust only the explicitly mounted workspace root.
+git config --global --add safe.directory "$workspace_dir"
+
 exec timeout --foreground --signal=TERM --kill-after=120 "$session_seconds" \
   code-server \
     --bind-addr 0.0.0.0:8080 \
     --auth none \
     --disable-telemetry \
-    --user-data-dir "$workspace_dir/.aurinara/code-server/user-data" \
-    --extensions-dir "$workspace_dir/.aurinara/code-server/extensions" \
+    --user-data-dir "$state_dir/code-server/user-data" \
+    --extensions-dir "$state_dir/code-server/extensions" \
     "$workspace_dir"

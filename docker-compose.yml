@@ -144,27 +144,45 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.workspace
-    environment: {WORKSPACE_ID: local-platform, WORKSPACE_SESSION_SECONDS: "86400", WORKSPACE_WAIT_FOR_SYNC: "false"}
+    environment:
+      WORKSPACE_ID: local-platform
+      WORKSPACE_SESSION_SECONDS: "86400"
+      WORKSPACE_WAIT_FOR_SYNC: "false"
+      WORKSPACE_STATE_DIR: /home/coder/.local/share/aurinara-workspace
     ports: ["127.0.0.1:18080:8080"]
-    volumes: [platform_workspace_data:/workspace]
+    volumes:
+      - {type: bind, source: ., target: /workspace}
+      - platform_workspace_state:/home/coder/.local/share/aurinara-workspace
 
   workspace-aurinara:
     profiles: [workspace]
     build:
       context: .
       dockerfile: Dockerfile.workspace
-    environment: {WORKSPACE_ID: local-aurinara, WORKSPACE_SESSION_SECONDS: "86400", WORKSPACE_WAIT_FOR_SYNC: "false"}
+    environment:
+      WORKSPACE_ID: local-aurinara
+      WORKSPACE_SESSION_SECONDS: "86400"
+      WORKSPACE_WAIT_FOR_SYNC: "false"
+      WORKSPACE_STATE_DIR: /home/coder/.local/share/aurinara-workspace
     ports: ["127.0.0.1:18081:8080"]
-    volumes: [aurinara_workspace_data:/workspace]
+    volumes:
+      - {type: bind, source: ../aurinara, target: /workspace}
+      - aurinara_workspace_state:/home/coder/.local/share/aurinara-workspace
 
   workspace-edc:
     profiles: [workspace]
     build:
       context: .
       dockerfile: Dockerfile.workspace
-    environment: {WORKSPACE_ID: local-edc, WORKSPACE_SESSION_SECONDS: "86400", WORKSPACE_WAIT_FOR_SYNC: "false"}
+    environment:
+      WORKSPACE_ID: local-edc
+      WORKSPACE_SESSION_SECONDS: "86400"
+      WORKSPACE_WAIT_FOR_SYNC: "false"
+      WORKSPACE_STATE_DIR: /home/coder/.local/share/aurinara-workspace
     ports: ["127.0.0.1:18082:8080"]
-    volumes: [edc_workspace_data:/workspace]
+    volumes:
+      - {type: bind, source: ../aurinara-edc, target: /workspace}
+      - edc_workspace_state:/home/coder/.local/share/aurinara-workspace
 
 volumes:
   platform_postgres_data:
@@ -175,6 +193,6 @@ volumes:
   platform_onlyoffice_logs:
   platform_onlyoffice_lib:
   platform_onlyoffice_database:
-  platform_workspace_data:
-  aurinara_workspace_data:
-  edc_workspace_data:
+  platform_workspace_state:
+  aurinara_workspace_state:
+  edc_workspace_state:
