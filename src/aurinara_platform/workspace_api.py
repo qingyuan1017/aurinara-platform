@@ -1,12 +1,14 @@
 """HTTP boundary for personal product workspaces."""
 
+import hashlib
+import tempfile
 from datetime import UTC, datetime
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response, WebSocket, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, WebSocket, status
 from sqlalchemy.orm import Session, sessionmaker
-from starlette.responses import RedirectResponse
+from starlette.responses import RedirectResponse, StreamingResponse
 
 from aurinara_platform.api import get_current_user, get_principal, get_session
 from aurinara_platform.auth import Principal
@@ -19,9 +21,13 @@ from aurinara_platform.workspace_proxy import (
     proxy_http_request,
     proxy_websocket,
 )
+from aurinara_platform.workspace_repository import WorkspaceRepositoryService
 from aurinara_platform.workspace_schemas import (
     WorkspaceLaunch,
+    WorkspaceRepositoryEntryResponse,
+    WorkspaceRepositoryManifest,
     WorkspaceState,
+    WorkspaceStaticRegistration,
     WorkspaceSyncHeartbeat,
 )
 
@@ -31,6 +37,17 @@ internal_router = APIRouter(prefix="/internal/workspaces", include_in_schema=Fal
 
 def get_workspace_service(request: Request) -> WorkspaceService:
     return cast(WorkspaceService, request.app.state.workspace_service)
+
+
+def get_workspace_repository(request: Request) -> WorkspaceRepositoryService:
+    return cast(WorkspaceRepositoryService, request.app.state.workspace_repository_service)
+
+
+def _callback_token(request: Request) -> str:
+    raw_token = request.headers.get("X-Workspace-Token")
+    if not raw_token:
+        raise Problem(403, "workspace_callback_invalid", "The callback token is invalid")
+    return raw_token
 
 
 def _proxy_authorizer(request: Request) -> WorkspaceProxyAuthorizer:
@@ -165,8 +182,121 @@ def workspace_sync_heartbeat(
     session: Annotated[Session, Depends(get_session)],
     service: Annotated[WorkspaceService, Depends(get_workspace_service)],
 ) -> Response:
-    raw_token = request.headers.get("X-Workspace-Token")
-    if not raw_token:
-        raise Problem(403, "workspace_callback_invalid", "The callback token is invalid")
-    service.heartbeat(session, workspace_id, raw_token, command)
+    service.heartbeat(session, workspace_id, _callback_token(request), command)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@internal_router.get(
+    "/static/{product}/registration", response_model=WorkspaceStaticRegistration
+)
+def workspace_static_registration(
+    product: str,
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[WorkspaceService, Depends(get_workspace_service)],
+    bootstrap_secret: Annotated[str | None, Header(alias="X-Workspace-Bootstrap")] = None,
+) -> WorkspaceStaticRegistration:
+    workspace, raw_token = service.static_callback_registration(
+        session, product, bootstrap_secret or ""
+    )
+    settings = cast(Settings, request.app.state.settings)
+    return WorkspaceStaticRegistration(
+        workspace_id=workspace.id,
+        callback_token=raw_token,
+        repository_url=(
+            f"{settings.workspace_callback_base_url.rstrip('/')}"
+            f"{settings.api_prefix}/internal/workspaces/{workspace.id}/repository"
+        ),
+    )
+
+
+@internal_router.get(
+    "/{workspace_id}/repository", response_model=WorkspaceRepositoryManifest
+)
+def workspace_repository_manifest(
+    workspace_id: UUID,
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    workspaces: Annotated[WorkspaceService, Depends(get_workspace_service)],
+    repository: Annotated[WorkspaceRepositoryService, Depends(get_workspace_repository)],
+) -> WorkspaceRepositoryManifest:
+    context = workspaces.callback_context(session, workspace_id, _callback_token(request))
+    return WorkspaceRepositoryManifest(
+        files=[
+            WorkspaceRepositoryEntryResponse.model_validate(entry)
+            for entry in repository.manifest(session, context.workspace, context.principal)
+        ]
+    )
+
+
+@internal_router.get("/{workspace_id}/repository/versions/{version_id}")
+def workspace_repository_download(
+    workspace_id: UUID,
+    version_id: UUID,
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    workspaces: Annotated[WorkspaceService, Depends(get_workspace_service)],
+    repository: Annotated[WorkspaceRepositoryService, Depends(get_workspace_repository)],
+) -> StreamingResponse:
+    context = workspaces.callback_context(session, workspace_id, _callback_token(request))
+    media_type, size_bytes, chunks = repository.download(
+        session, context.workspace, context.principal, version_id
+    )
+    return StreamingResponse(
+        chunks,
+        media_type=media_type,
+        headers={"Content-Length": str(size_bytes)},
+    )
+
+
+@internal_router.put(
+    "/{workspace_id}/repository/nodes/{node_id}",
+    response_model=WorkspaceRepositoryEntryResponse,
+)
+async def workspace_repository_replace(
+    workspace_id: UUID,
+    node_id: UUID,
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    workspaces: Annotated[WorkspaceService, Depends(get_workspace_service)],
+    repository: Annotated[WorkspaceRepositoryService, Depends(get_workspace_repository)],
+    base_version_id: Annotated[UUID, Header(alias="X-Base-Version-Id")],
+    expected_sha256: Annotated[str, Header(alias="X-Content-SHA256")],
+) -> WorkspaceRepositoryEntryResponse:
+    if len(expected_sha256) != 64 or any(
+        char not in "0123456789abcdef" for char in expected_sha256
+    ):
+        raise Problem(422, "invalid_checksum", "The content checksum is invalid")
+    context = workspaces.callback_context(session, workspace_id, _callback_token(request))
+    settings = cast(Settings, request.app.state.settings)
+    digest = hashlib.sha256()
+    size_bytes = 0
+    with tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024) as body:
+        async for chunk in request.stream():
+            size_bytes += len(chunk)
+            if size_bytes > settings.object_max_bytes:
+                raise Problem(
+                    413, "object_too_large", "The object exceeds the configured size limit"
+                )
+            digest.update(chunk)
+            body.write(chunk)
+        if digest.hexdigest() != expected_sha256:
+            raise Problem(
+                422,
+                "object_verification_failed",
+                "The uploaded object failed verification",
+            )
+        body.seek(0)
+        entry = repository.replace(
+            session,
+            context.workspace,
+            context.principal,
+            context.user,
+            node_id,
+            base_version_id,
+            iter(lambda: body.read(1024 * 1024), b""),
+            sha256=expected_sha256,
+            size_bytes=size_bytes,
+            media_type=request.headers.get("Content-Type") or "application/octet-stream",
+        )
+    return WorkspaceRepositoryEntryResponse.model_validate(entry)

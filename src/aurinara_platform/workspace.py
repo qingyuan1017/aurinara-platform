@@ -30,6 +30,7 @@ from aurinara_platform.workspace_runtime import (
     WorkspaceCapacityError,
     WorkspaceRuntime,
     WorkspaceRuntimeError,
+    callback_token,
 )
 from aurinara_platform.workspace_schemas import (
     WorkspaceLaunch,
@@ -57,6 +58,13 @@ class ProxyTarget:
     workspace_id: UUID
     target_url: str
     session_expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceCallbackContext:
+    workspace: Workspace
+    user: User
+    principal: Principal
 
 
 class WorkspaceService:
@@ -414,13 +422,7 @@ class WorkspaceService:
         raw_token: str,
         heartbeat: WorkspaceSyncHeartbeat,
     ) -> None:
-        workspace = session.get(Workspace, workspace_id)
-        if (
-            workspace is None
-            or workspace.callback_token_sha256 is None
-            or not hmac.compare_digest(workspace.callback_token_sha256, _token_hash(raw_token))
-        ):
-            raise Problem(403, "workspace_callback_invalid", "The callback token is invalid")
+        workspace = self.callback_context(session, workspace_id, raw_token).workspace
         workspace.usage_bytes = heartbeat.usage_bytes
         workspace.sync_state = (
             "quota_exceeded"
@@ -432,6 +434,61 @@ class WorkspaceService:
         )
         workspace.failure_code = heartbeat.failure_code
         workspace.revision += 1
+
+    def callback_context(
+        self, session: Session, workspace_id: UUID, raw_token: str
+    ) -> WorkspaceCallbackContext:
+        workspace = session.get(Workspace, workspace_id)
+        if (
+            workspace is None
+            or workspace.callback_token_sha256 is None
+            or not hmac.compare_digest(workspace.callback_token_sha256, _token_hash(raw_token))
+        ):
+            raise Problem(403, "workspace_callback_invalid", "The callback token is invalid")
+        self._reconcile(workspace)
+        user = self._require_user_access(session, workspace.owner_user_id, workspace.product)
+        if workspace.status not in {"pending", "running", "stopping"}:
+            raise Problem(409, "workspace_not_running", "The workspace is not running")
+        return WorkspaceCallbackContext(
+            workspace=workspace,
+            user=user,
+            principal=Principal(
+                issuer=user.issuer,
+                subject=user.subject,
+                email=user.email,
+                display_name=user.display_name,
+            ),
+        )
+
+    def static_callback_registration(
+        self, session: Session, product: str, bootstrap_secret: str
+    ) -> tuple[Workspace, str]:
+        if (
+            self._settings.environment != "development"
+            or self._settings.workspace_runtime_mode != "static"
+            or not hmac.compare_digest(
+                bootstrap_secret,
+                self._settings.workspace_callback_secret.get_secret_value(),
+            )
+        ):
+            raise Problem(403, "workspace_callback_invalid", "The callback token is invalid")
+        workspace = session.scalar(
+            select(Workspace)
+            .where(
+                Workspace.product == product,
+                Workspace.status.in_(("pending", "running")),
+            )
+            .order_by(Workspace.session_started_at.desc())
+        )
+        if workspace is None:
+            raise Problem(404, "workspace_not_running", "The workspace is not running")
+        self._require_user_access(session, workspace.owner_user_id, workspace.product)
+        raw_token = callback_token(self._settings, workspace.id, workspace.generation)
+        if not hmac.compare_digest(
+            workspace.callback_token_sha256 or "", _token_hash(raw_token)
+        ):
+            raise Problem(403, "workspace_callback_invalid", "The callback token is invalid")
+        return workspace, raw_token
 
     @staticmethod
     def _revoke_sessions(session: Session, workspace_id: UUID) -> None:

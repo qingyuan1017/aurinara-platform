@@ -118,16 +118,21 @@ launch grant; the proxy exchanges it for a secure path-scoped HTTP-only cookie.
 Consumer frontends deploy only after the Platform migration and workspace
 runtime have been verified.
 
-For local development, start the three loopback-only code-server instances with:
+For local development, start the three loopback-only code-server instances and
+their Repository synchronizers with:
 
 ```bash
-docker compose --profile workspace up -d --build workspace-platform workspace-aurinara workspace-edc
+docker compose --profile workspace up -d --build \
+  workspace-platform workspace-platform-repository-sync \
+  workspace-aurinara workspace-aurinara-repository-sync \
+  workspace-edc workspace-edc-repository-sync
 ```
 
-Each IDE opens the matching checkout directly at `/workspace`: the current
-Platform repository, `../aurinara`, or `../aurinara-edc`. Editor settings and
-extensions remain isolated in separate named volumes, so code-server metadata
-does not modify the repositories.
+Each IDE uses an isolated named volume. The `/workspace/repository` directory is
+an authorized logical working copy of the central Repository stored in S3 or
+MinIO, organized by study and Repository folders. Existing writable files are
+published back as new immutable Repository versions during synchronization;
+internal object keys and storage credentials are never exposed to the IDE.
 
 Local API configuration must include `WORKSPACE_ENABLED=true`,
 `WORKSPACE_RUNTIME_MODE=static`, and `WORKSPACE_PUBLIC_BASE_URL` matching the

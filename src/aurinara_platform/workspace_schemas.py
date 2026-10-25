@@ -42,3 +42,30 @@ class WorkspaceSyncHeartbeat(BaseModel):
     usage_bytes: int = Field(ge=0)
     synced_at: datetime | None = None
     failure_code: Literal["sync_failed", "quota_exceeded"] | None = None
+
+
+class WorkspaceRepositoryEntryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    path: str
+    study_id: UUID
+    node_id: UUID
+    version_id: UUID
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(ge=0)
+    media_type: str
+    writable: bool
+
+
+class WorkspaceRepositoryManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    files: list[WorkspaceRepositoryEntryResponse]
+
+
+class WorkspaceStaticRegistration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_id: UUID
+    callback_token: str
+    repository_url: str

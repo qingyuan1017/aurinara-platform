@@ -21,10 +21,6 @@ if [[ "$wait_for_sync" == true ]]; then
   [[ -f "$ready_file" ]] || exit 1
 fi
 
-# Docker Desktop bind mounts can report a different owner than the non-root
-# container user. Trust only the explicitly mounted workspace root.
-git config --global --add safe.directory "$workspace_dir"
-
 exec timeout --foreground --signal=TERM --kill-after=120 "$session_seconds" \
   code-server \
     --bind-addr 0.0.0.0:8080 \

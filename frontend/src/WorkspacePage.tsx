@@ -104,7 +104,7 @@ export function WorkspacePage() {
   return <section className="workspace-page">
     <div className="workspace-hero">
       <div className="workspace-icon"><SquareTerminal /></div>
-      <div><span className="eyebrow">Personal development environment</span><h2>Your {workspace.product} workspace</h2><p>Python, R, Node.js, Git, and VS Code in the browser. Files persist automatically between sessions.</p></div>
+      <div><span className="eyebrow">Repository workspace</span><h2>Your {workspace.product} workspace</h2><p>Work with your authorized S3/MinIO Repository files in VS Code. Existing file edits are saved as new Repository versions.</p></div>
     </div>
     <div className="workspace-card">
       <div className="workspace-summary">

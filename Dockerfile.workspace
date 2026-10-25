@@ -9,9 +9,11 @@ RUN apt-get update \
 
 COPY scripts/workspace-ide-entrypoint.sh /usr/local/bin/workspace-ide
 COPY scripts/workspace-sync-entrypoint.sh /usr/local/bin/workspace-sync
+COPY scripts/workspace-repository-sync.py /usr/local/bin/workspace-repository-sync
 RUN chmod 0555 /usr/local/bin/workspace-ide /usr/local/bin/workspace-sync \
-    && mkdir -p /workspace /home/coder/.local/share/aurinara-workspace \
-    && chown coder:coder /workspace /home/coder/.local/share/aurinara-workspace
+      /usr/local/bin/workspace-repository-sync \
+    && mkdir -p /workspace \
+    && chown coder:coder /workspace
 
 USER coder
 WORKDIR /workspace

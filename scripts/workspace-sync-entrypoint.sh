@@ -37,6 +37,7 @@ heartbeat() {
 
 sync_to_s3() {
   local bytes
+  workspace-repository-sync || true
   bytes=$(usage_bytes)
   if (( bytes > WORKSPACE_QUOTA_BYTES )); then
     cat > "$workspace_dir/.aurinara/QUOTA_EXCEEDED.md" <<'EOF'
@@ -69,6 +70,7 @@ heartbeat syncing 0
 if aws s3 sync "s3://${WORKSPACE_BUCKET}/${WORKSPACE_PREFIX}" "$workspace_dir" \
   --delete --exclude '.aurinara-ready'; then
   initial_bytes=$(usage_bytes)
+  workspace-repository-sync || true
   touch "$workspace_dir/.aurinara-ready"
   if (( initial_bytes > WORKSPACE_QUOTA_BYTES )); then
     heartbeat quota_exceeded "$initial_bytes" quota_exceeded
@@ -76,6 +78,7 @@ if aws s3 sync "s3://${WORKSPACE_BUCKET}/${WORKSPACE_PREFIX}" "$workspace_dir" \
     heartbeat synced "$initial_bytes"
   fi
 else
+  workspace-repository-sync || true
   touch "$workspace_dir/.aurinara-ready"
   heartbeat failed 0 sync_failed
 fi

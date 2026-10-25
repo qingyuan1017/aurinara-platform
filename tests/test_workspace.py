@@ -10,8 +10,16 @@ from aurinara_platform.auth import InvalidTokenError, Principal
 from aurinara_platform.config import Settings
 from aurinara_platform.main import create_app
 from aurinara_platform.models import (
+    ObjectReference,
+    Permission,
+    PolicyState,
+    RepositoryFileVersion,
+    RepositoryNode,
     Role,
     RoleAssignment,
+    RolePermission,
+    StoredObject,
+    Study,
     User,
     Workspace,
     WorkspaceLaunchGrant,
@@ -52,7 +60,42 @@ class NullStorage:
     def presign_download(self, key):
         return "https://download.test"
 
+    def read_bytes(self, key, *, max_bytes=None):
+        del key, max_bytes
+        return b""
+
+    def iter_bytes(self, key, *, chunk_size=1024 * 1024, max_bytes=None):
+        del key, chunk_size, max_bytes
+        return iter(())
+
+    def write_bytes(self, key, data, media_type, sha256):
+        del key, data
+        return ObjectFacts(0, sha256, media_type)
+
+    def write_stream(self, key, chunks, media_type, sha256, *, size_bytes=None):
+        del key, chunks
+        return ObjectFacts(size_bytes or 0, sha256, media_type)
+
     def delete(self, key): ...
+
+
+class MemoryStorage(NullStorage):
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def iter_bytes(self, key, *, chunk_size=1024 * 1024, max_bytes=None):
+        del chunk_size, max_bytes
+        yield self.objects[key]
+
+    def write_stream(self, key, chunks, media_type, sha256, *, size_bytes=None):
+        data = b"".join(chunks)
+        assert hashlib.sha256(data).hexdigest() == sha256
+        assert size_bytes == len(data)
+        self.objects[key] = data
+        return ObjectFacts(len(data), sha256, media_type)
+
+    def delete(self, key):
+        self.objects.pop(key, None)
 
 
 class FakeWorkspaceRuntime:
@@ -86,7 +129,7 @@ class FakeWorkspaceRuntime:
         del key
 
 
-def _client(session_factory, *, environment: str = "test"):
+def _client(session_factory, *, environment: str = "test", storage=None):
     settings_values = dict(
         environment="test",
         workspace_enabled=True,
@@ -137,10 +180,104 @@ def _client(session_factory, *, environment: str = "test"):
         settings,
         session_factory=session_factory,
         token_verifier=WorkspaceVerifier(),
-        object_storage=NullStorage(),
+        object_storage=storage or NullStorage(),
         workspace_runtime=runtime,
     )
     return TestClient(app), runtime
+
+
+def _seed_workspace_repository(session_factory, storage: MemoryStorage) -> tuple[UUID, UUID]:
+    with session_factory.begin() as session:
+        user = session.scalar(select(User).where(User.subject == "artifact-user"))
+        role = session.scalar(select(Role).where(Role.product == "aurinara"))
+        assert user is not None and role is not None
+        study = Study(
+            code="WS-001",
+            display_name="Workspace Repository",
+            created_by=user.id,
+        )
+        permissions = [
+            Permission(
+                code="platform.repository.read",
+                product="platform",
+                allowed_scope_levels=["system", "study"],
+            ),
+            Permission(
+                code="platform.repository.write",
+                product="platform",
+                allowed_scope_levels=["system", "study"],
+            ),
+            Permission(
+                code="aurinara.repository.read",
+                product="aurinara",
+                allowed_scope_levels=["system", "study"],
+            ),
+            Permission(
+                code="aurinara.repository.write",
+                product="aurinara",
+                allowed_scope_levels=["system", "study"],
+            ),
+        ]
+        session.add_all([study, *permissions, PolicyState(id=1)])
+        session.flush()
+        session.add_all(
+            [
+                RolePermission(role_id=role.id, permission_code=permission.code)
+                for permission in permissions
+            ]
+        )
+        content = b"name,value\nalpha,1\n"
+        digest = hashlib.sha256(content).hexdigest()
+        key = f"test/studies/{study.id}/sha256/{digest}"
+        storage.objects[key] = content
+        stored = StoredObject(
+            study_id=study.id,
+            owner_product="aurinara",
+            upload_authorization_action="aurinara.repository.write",
+            classification="internal",
+            sha256=digest,
+            size_bytes=len(content),
+            media_type="text/csv",
+            object_key=key,
+            status="available",
+            created_by=user.id,
+        )
+        session.add(stored)
+        session.flush()
+        reference = ObjectReference(
+            object_id=stored.id,
+            product="aurinara",
+            authorization_action="aurinara.repository.write",
+            external_reference="workspace-test:v1",
+            created_by=user.id,
+        )
+        node = RepositoryNode(
+            study_id=study.id,
+            kind="file",
+            display_name="analysis.csv",
+            normalized_name="analysis.csv",
+            source_product="aurinara",
+            classification="internal",
+            required_read_action="aurinara.repository.read",
+            required_write_action="aurinara.repository.write",
+            source_resource_type="test",
+            source_status="available",
+            current_version_number=1,
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        session.add_all([reference, node])
+        session.flush()
+        version = RepositoryFileVersion(
+            node_id=node.id,
+            version_number=1,
+            object_id=stored.id,
+            object_reference_id=reference.id,
+            created_by=user.id,
+        )
+        session.add(version)
+        session.flush()
+        return node.id, version.id
 
 
 def test_workspace_is_one_click_idempotent_and_public_state_is_sanitized(session_factory) -> None:
@@ -288,3 +425,71 @@ def test_workspace_records_are_isolated_by_product(session_factory) -> None:
     assert runtime.starts == 2
     with session_factory() as session:
         assert len(session.scalars(select(Workspace)).all()) == 2
+
+
+def test_workspace_repository_mirrors_and_versions_authorized_objects(session_factory) -> None:
+    storage = MemoryStorage()
+    client, _ = _client(session_factory, storage=storage)
+    node_id, original_version_id = _seed_workspace_repository(session_factory, storage)
+    workspace_id = client.post(
+        "/v1/workspaces/current/start",
+        headers={"Authorization": "Bearer artifact-token"},
+    ).json()["workspace_id"]
+    callback_headers = {"X-Workspace-Token": "callback-token"}
+
+    manifest = client.get(
+        f"/v1/internal/workspaces/{workspace_id}/repository",
+        headers=callback_headers,
+    )
+    assert manifest.status_code == 200
+    assert manifest.json()["files"] == [
+        {
+            "path": "WS-001/analysis.csv",
+            "study_id": manifest.json()["files"][0]["study_id"],
+            "node_id": str(node_id),
+            "version_id": str(original_version_id),
+            "sha256": hashlib.sha256(b"name,value\nalpha,1\n").hexdigest(),
+            "size_bytes": 19,
+            "media_type": "text/csv",
+            "writable": True,
+        }
+    ]
+    downloaded = client.get(
+        f"/v1/internal/workspaces/{workspace_id}/repository/versions/{original_version_id}",
+        headers=callback_headers,
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"name,value\nalpha,1\n"
+
+    updated_content = b"name,value\nalpha,2\n"
+    updated_digest = hashlib.sha256(updated_content).hexdigest()
+    updated = client.put(
+        f"/v1/internal/workspaces/{workspace_id}/repository/nodes/{node_id}",
+        headers={
+            **callback_headers,
+            "X-Base-Version-Id": str(original_version_id),
+            "X-Content-SHA256": updated_digest,
+            "Content-Type": "text/csv",
+        },
+        content=updated_content,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["sha256"] == updated_digest
+    assert updated.json()["version_id"] != str(original_version_id)
+
+    conflict = client.put(
+        f"/v1/internal/workspaces/{workspace_id}/repository/nodes/{node_id}",
+        headers={
+            **callback_headers,
+            "X-Base-Version-Id": str(original_version_id),
+            "X-Content-SHA256": updated_digest,
+            "Content-Type": "text/csv",
+        },
+        content=updated_content,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "workspace_repository_conflict"
+
+    with session_factory() as session:
+        node = session.get(RepositoryNode, node_id)
+        assert node is not None and node.current_version_number == 2

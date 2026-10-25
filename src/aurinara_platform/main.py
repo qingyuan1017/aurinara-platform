@@ -39,6 +39,7 @@ from aurinara_platform.storage import (
 from aurinara_platform.workspace import WorkspaceProxyAuthorizer, WorkspaceService
 from aurinara_platform.workspace_api import internal_router as workspace_internal_router
 from aurinara_platform.workspace_api import router as workspace_router
+from aurinara_platform.workspace_repository import WorkspaceRepositoryService
 from aurinara_platform.workspace_runtime import WorkspaceRuntime, create_workspace_runtime
 
 
@@ -86,6 +87,9 @@ def create_app(
     app.state.playground_memory = AgentCoreMemoryClient()
     app.state.workspace_service = WorkspaceService(
         resolved, workspace_runtime or create_workspace_runtime(resolved)
+    )
+    app.state.workspace_repository_service = WorkspaceRepositoryService(
+        resolved, app.state.repository_service, storage, scanner
     )
     app.state.workspace_proxy_authorizer = WorkspaceProxyAuthorizer(
         app.state.workspace_service, resolved.workspace_proxy_cache_seconds
