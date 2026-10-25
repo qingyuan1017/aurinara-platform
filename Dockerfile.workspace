@@ -1,11 +1,41 @@
-FROM ghcr.io/coder/code-server:4.96.4@sha256:9c3f63f0b3b40217dc15c922a8fecce85bc180f13f7552ebe4076cc2d00e5f28
+FROM node:24-bookworm-slim@sha256:2dd9a4f758e173b65fee15388f7706af6fb01ef50cf7a2c0538711d67a6981ae AS node-runtime
+
+RUN npm install --global npm@12.2.1 \
+    && npm install --prefix /opt/security-patches/code-server \
+      --ignore-scripts --no-audit --no-fund --no-save \
+      basic-ftp@6.2.1 body-parser@2.4.0 follow-redirects@1.16.1 \
+    && npm install --prefix /opt/security-patches/vscode \
+      --ignore-scripts --no-audit --no-fund --no-save \
+      shell-quote@1.11.0 undici@7.30.1 zod@4.6.6 \
+    && npm install --prefix /opt/security-patches/npm \
+      --ignore-scripts --no-audit --no-fund --no-save undici@6.29.1 \
+    && npm cache clean --force
+
+FROM ghcr.io/coder/code-server:4.143.1@sha256:bc1a44f83c207dd9607cad8f5a13843918131361e899b4ebae9b786f5adbb76f
 
 USER root
 
 RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      awscli ca-certificates curl git nodejs npm python3 python3-pip python3-venv r-base \
+      awscli ca-certificates curl git python3 python3-pip python3-venv r-base \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node-runtime /opt/security-patches/npm/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici
+COPY --from=node-runtime /opt/security-patches/code-server/node_modules/basic-ftp /usr/lib/code-server/node_modules/basic-ftp
+COPY --from=node-runtime /opt/security-patches/code-server/node_modules/body-parser /usr/lib/code-server/node_modules/body-parser
+COPY --from=node-runtime /opt/security-patches/code-server/node_modules/follow-redirects /usr/lib/code-server/node_modules/follow-redirects
+COPY --from=node-runtime /opt/security-patches/vscode/node_modules/shell-quote /usr/lib/code-server/lib/vscode/node_modules/shell-quote
+COPY --from=node-runtime /opt/security-patches/vscode/node_modules/undici /usr/lib/code-server/lib/vscode/node_modules/undici
+COPY --from=node-runtime /opt/security-patches/vscode/node_modules/zod /usr/lib/code-server/lib/vscode/node_modules/zod
+COPY --from=node-runtime /opt/security-patches/vscode/node_modules/zod /usr/lib/code-server/lib/vscode/node_modules/@vscode/sandbox-runtime/node_modules/zod
+COPY --from=node-runtime /opt/security-patches/vscode/node_modules/zod /usr/lib/code-server/lib/vscode/node_modules/@github/copilot-sdk/node_modules/zod
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
+    && rm -f /usr/local/bin/fixuid
 
 COPY scripts/workspace-ide-entrypoint.sh /usr/local/bin/workspace-ide
 COPY scripts/workspace-sync-entrypoint.sh /usr/local/bin/workspace-sync
