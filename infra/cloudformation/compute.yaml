@@ -314,7 +314,7 @@ Resources:
             Command: [CMD-SHELL, 'test -f /workspace/.aurinara-ready || exit 1']
             Interval: 10
             Timeout: 5
-            Retries: 12
+            Retries: 10
             StartPeriod: 10
           LinuxParameters: {InitProcessEnabled: true, Capabilities: {Drop: [ALL]}}
           LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref WorkspaceLogGroup, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: sync}}
