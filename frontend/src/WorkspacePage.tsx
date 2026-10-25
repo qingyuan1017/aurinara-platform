@@ -26,7 +26,16 @@ export function WorkspacePage() {
     return current
   }, [])
 
-  useEffect(() => { void refresh().catch((reason) => setError(errorMessage(reason))) }, [refresh])
+  const load = useCallback(async () => {
+    setError('')
+    try {
+      await refresh()
+    } catch (reason) {
+      setError(errorMessage(reason))
+    }
+  }, [refresh])
+
+  useEffect(() => { void load() }, [load])
   useEffect(() => {
     const timer = window.setInterval(() => setNowMilliseconds(Date.now()), 1000)
     return () => window.clearInterval(timer)
@@ -80,7 +89,13 @@ export function WorkspacePage() {
     }
   }
 
-  if (!workspace) return <div className="workspace-card workspace-loading"><LoaderCircle className="spin" />Loading workspace…</div>
+  if (!workspace) {
+    return <div className="workspace-card workspace-loading">
+      {error
+        ? <><p className="form-error">{error}</p><button className="ghost" onClick={() => void load()}>Retry</button></>
+        : <><LoaderCircle className="spin" />Loading workspace…</>}
+    </div>
+  }
   const active = ['pending', 'running', 'stopping'].includes(workspace.status)
   const syncLabel = workspace.sync_state === 'quota_exceeded' ? 'Storage limit exceeded'
     : workspace.sync_state === 'synced' ? 'Saved to cloud'

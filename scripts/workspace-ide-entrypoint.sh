@@ -3,20 +3,22 @@ set -euo pipefail
 
 workspace_dir=${WORKSPACE_DIR:-/workspace}
 session_seconds=${WORKSPACE_SESSION_SECONDS:-7200}
+wait_for_sync=${WORKSPACE_WAIT_FOR_SYNC:-true}
 ready_file="$workspace_dir/.aurinara-ready"
 
 mkdir -p \
   "$workspace_dir/.aurinara/code-server/user-data" \
   "$workspace_dir/.aurinara/code-server/extensions"
 
-# Do not expose the editor until the sync sidecar has completed its initial
-# restore attempt. The sidecar creates the marker even when restore fails so a
-# recoverable S3 outage does not leave the task stuck forever.
-for _ in $(seq 1 300); do
-  [[ -f "$ready_file" ]] && break
-  sleep 1
-done
-[[ -f "$ready_file" ]] || exit 1
+# ECS waits for the sync sidecar's initial restore. Static local development
+# uses a named volume directly and intentionally has no sync sidecar.
+if [[ "$wait_for_sync" == true ]]; then
+  for _ in $(seq 1 300); do
+    [[ -f "$ready_file" ]] && break
+    sleep 1
+  done
+  [[ -f "$ready_file" ]] || exit 1
+fi
 
 exec timeout --foreground --signal=TERM --kill-after=120 "$session_seconds" \
   code-server \

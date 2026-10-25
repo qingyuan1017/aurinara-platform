@@ -87,6 +87,11 @@ def configuration(
     jwks = outputs["JwtJwksUrl"]
     user_pool = outputs["UserPoolId"]
     domain = outputs["CognitoDomain"]
+    product_audiences = (
+        f"platform={platform_client};"
+        f"aurinara={aurinara_client};"
+        f"aurinara-edc={edc_client}"
+    )
 
     return {
         platform_repo / ".env": {
@@ -94,6 +99,8 @@ def configuration(
             "OIDC_AUDIENCE": platform_client,
             "OIDC_USER_AUDIENCES": ",".join([platform_client, aurinara_client, edc_client]),
             "OIDC_JWKS_URL": jwks,
+            "PLAYGROUND_PRODUCT_AUDIENCES": product_audiences,
+            "WORKSPACE_PRODUCT_AUDIENCES": product_audiences,
             "CORS_ORIGINS": "http://localhost:5173,http://localhost:5174,http://localhost:5175",
         },
         platform_repo / "frontend" / ".env": {

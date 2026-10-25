@@ -84,3 +84,8 @@ def test_configuration_uses_separate_clients_and_local_callbacks(tmp_path: Path)
     assert settings[tmp_path / "platform" / ".env"]["CORS_ORIGINS"] == (
         "http://localhost:5173,http://localhost:5174,http://localhost:5175"
     )
+    assert settings[tmp_path / "platform" / ".env"]["WORKSPACE_PRODUCT_AUDIENCES"] == (
+        "platform=platform-development;"
+        "aurinara=aurinara-development;"
+        "aurinara-edc=edc-development"
+    )

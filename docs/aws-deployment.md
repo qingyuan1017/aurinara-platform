@@ -122,8 +122,14 @@ For local development, start the three loopback-only code-server instances and
 their separate named volumes with:
 
 ```bash
-docker compose --profile workspace up -d workspace-platform workspace-aurinara workspace-edc
+docker compose --profile workspace up -d --build workspace-platform workspace-aurinara workspace-edc
 ```
+
+Local API configuration must include `WORKSPACE_ENABLED=true`,
+`WORKSPACE_RUNTIME_MODE=static`, and `WORKSPACE_PUBLIC_BASE_URL` matching the
+API origin before the API is restarted. Run `alembic upgrade head` after pulling
+workspace changes; a missing workspace route or table is surfaced by the UI with
+a retry action instead of an indefinite loading state.
 
 In the `standard` profile the workflow also publishes the PrivateLink ownership
 TXT record and waits for AWS verification. Verify this before starting standard
