@@ -12,10 +12,11 @@ COPY scripts/workspace-sync-entrypoint.sh /usr/local/bin/workspace-sync
 COPY scripts/workspace-repository-sync.py /usr/local/bin/workspace-repository-sync
 RUN chmod 0555 /usr/local/bin/workspace-ide /usr/local/bin/workspace-sync \
       /usr/local/bin/workspace-repository-sync \
-    && mkdir -p /workspace \
-    && chown coder:coder /workspace
+    && mkdir -p /workspace /home/coder/.local/share/aurinara-workspace \
+    && chown coder:coder /workspace /home/coder/.local/share/aurinara-workspace
 
 USER coder
+ENV WORKSPACE_STATE_DIR=/home/coder/.local/share/aurinara-workspace
 WORKDIR /workspace
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]

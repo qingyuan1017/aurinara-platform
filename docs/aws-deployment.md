@@ -133,6 +133,8 @@ an authorized logical working copy of the central Repository stored in S3 or
 MinIO, organized by study and Repository folders. Existing writable files are
 published back as new immutable Repository versions during synchronization;
 internal object keys and storage credentials are never exposed to the IDE.
+code-server settings and extensions live in a separate private state directory,
+so `.aurinara/code-server` is not shown inside the workspace.
 
 Local API configuration must include `WORKSPACE_ENABLED=true`,
 `WORKSPACE_RUNTIME_MODE=static`, and `WORKSPACE_PUBLIC_BASE_URL` matching the

@@ -149,7 +149,9 @@ services:
       WORKSPACE_SESSION_SECONDS: "86400"
       WORKSPACE_WAIT_FOR_SYNC: "false"
     ports: ["127.0.0.1:18080:8080"]
-    volumes: [platform_workspace_data:/workspace]
+    volumes:
+      - platform_workspace_data:/workspace
+      - platform_workspace_state:/home/coder/.local/share/aurinara-workspace
 
   workspace-platform-repository-sync:
     profiles: [workspace]
@@ -174,7 +176,9 @@ services:
       WORKSPACE_SESSION_SECONDS: "86400"
       WORKSPACE_WAIT_FOR_SYNC: "false"
     ports: ["127.0.0.1:18081:8080"]
-    volumes: [aurinara_workspace_data:/workspace]
+    volumes:
+      - aurinara_workspace_data:/workspace
+      - aurinara_workspace_state:/home/coder/.local/share/aurinara-workspace
 
   workspace-aurinara-repository-sync:
     profiles: [workspace]
@@ -199,7 +203,9 @@ services:
       WORKSPACE_SESSION_SECONDS: "86400"
       WORKSPACE_WAIT_FOR_SYNC: "false"
     ports: ["127.0.0.1:18082:8080"]
-    volumes: [edc_workspace_data:/workspace]
+    volumes:
+      - edc_workspace_data:/workspace
+      - edc_workspace_state:/home/coder/.local/share/aurinara-workspace
 
   workspace-edc-repository-sync:
     profiles: [workspace]
@@ -226,3 +232,6 @@ volumes:
   platform_workspace_data:
   aurinara_workspace_data:
   edc_workspace_data:
+  platform_workspace_state:
+  aurinara_workspace_state:
+  edc_workspace_state:
