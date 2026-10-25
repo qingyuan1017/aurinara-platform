@@ -195,10 +195,13 @@ def workspace_static_registration(
     session: Annotated[Session, Depends(get_session)],
     service: Annotated[WorkspaceService, Depends(get_workspace_service)],
     bootstrap_secret: Annotated[str | None, Header(alias="X-Workspace-Bootstrap")] = None,
-) -> WorkspaceStaticRegistration:
-    workspace, raw_token = service.static_callback_registration(
+) -> WorkspaceStaticRegistration | Response:
+    registration = service.static_callback_registration(
         session, product, bootstrap_secret or ""
     )
+    if registration is None:
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
+    workspace, raw_token = registration
     settings = cast(Settings, request.app.state.settings)
     return WorkspaceStaticRegistration(
         workspace_id=workspace.id,

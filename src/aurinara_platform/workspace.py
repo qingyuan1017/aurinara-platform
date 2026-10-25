@@ -462,7 +462,7 @@ class WorkspaceService:
 
     def static_callback_registration(
         self, session: Session, product: str, bootstrap_secret: str
-    ) -> tuple[Workspace, str]:
+    ) -> tuple[Workspace, str] | None:
         if (
             self._settings.environment != "development"
             or self._settings.workspace_runtime_mode != "static"
@@ -481,7 +481,10 @@ class WorkspaceService:
             .order_by(Workspace.session_started_at.desc())
         )
         if workspace is None:
-            raise Problem(404, "workspace_not_running", "The workspace is not running")
+            return None
+        self._reconcile(workspace)
+        if workspace.status not in {"pending", "running"}:
+            return None
         self._require_user_access(session, workspace.owner_user_id, workspace.product)
         raw_token = callback_token(self._settings, workspace.id, workspace.generation)
         if not hmac.compare_digest(
