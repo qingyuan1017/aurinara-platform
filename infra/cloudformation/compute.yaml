@@ -61,7 +61,7 @@ Conditions:
   IsStandard: !Not [!Condition IsBudget]
   ServicesActive: !Equals [!Ref ServicesEnabled, 'true']
   ApplicationImageReady: !Equals [!Ref ApplicationImage, !Ref MigrationApplicationImage]
-  IdentityRegistrationActive: !And
+  NewApplicationServicesActive: !And
     - !Condition ServicesActive
     - !Condition ApplicationImageReady
   HasMalwareScanner: !Equals [!Ref MalwareScanRequired, 'true']
@@ -494,7 +494,7 @@ Resources:
       ServiceName: repository-worker
       Cluster: !Ref Cluster
       TaskDefinition: !Ref RepositoryWorkerTaskDefinition
-      DesiredCount: !If [ServicesActive, 1, 0]
+      DesiredCount: !If [NewApplicationServicesActive, 1, 0]
       LaunchType: FARGATE
       DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 0, MaximumPercent: 200}
       NetworkConfiguration: {AwsvpcConfiguration: {AssignPublicIp: DISABLED, SecurityGroups: [!Ref WorkerSecurityGroupId], Subnets: !Ref AppSubnetIds}}
@@ -614,7 +614,7 @@ Resources:
       # Deployment first registers the migration image while existing services keep
       # their old digest. Start this new worker only after the second phase switches
       # ApplicationImage to that successfully migrated image.
-      DesiredCount: !If [IdentityRegistrationActive, 1, 0]
+      DesiredCount: !If [NewApplicationServicesActive, 1, 0]
       LaunchType: FARGATE
       DeploymentConfiguration: {DeploymentCircuitBreaker: {Enable: true, Rollback: true}, MinimumHealthyPercent: 0, MaximumPercent: 200}
       NetworkConfiguration: {AwsvpcConfiguration: {AssignPublicIp: DISABLED, SecurityGroups: [!Ref WorkerSecurityGroupId], Subnets: !Ref AppSubnetIds}}
