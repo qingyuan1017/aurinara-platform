@@ -86,7 +86,6 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: !Sub /aurinara-platform/${Environment}/workspaces
       RetentionInDays: !If [IsBudget, 30, !If [IsProduction, 365, 90]]
       KmsKeyId: !Ref DataKeyArn
   WorkspaceSyncFailureMetric:
