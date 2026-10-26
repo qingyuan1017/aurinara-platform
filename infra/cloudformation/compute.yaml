@@ -293,7 +293,6 @@ Resources:
       Family: !Sub aurinara-platform-${Environment}-workspace
       Cpu: '1024'
       Memory: '2048'
-      EphemeralStorage: {SizeInGiB: 20}
       NetworkMode: awsvpc
       RequiresCompatibilities: [FARGATE]
       ExecutionRoleArn: !GetAtt WorkspaceTaskExecutionRole.Arn
