@@ -104,7 +104,6 @@ Resources:
     Type: AWS::EFS::AccessPoint
     Properties:
       FileSystemId: !Ref OnlyOfficeFileSystem
-      PosixUser: {Uid: '1000', Gid: '1000'}
       RootDirectory:
         Path: /data
         CreationInfo: {OwnerUid: '1000', OwnerGid: '1000', Permissions: '0770'}
@@ -112,7 +111,6 @@ Resources:
     Type: AWS::EFS::AccessPoint
     Properties:
       FileSystemId: !Ref OnlyOfficeFileSystem
-      PosixUser: {Uid: '1000', Gid: '1000'}
       RootDirectory:
         Path: /lib
         CreationInfo: {OwnerUid: '1000', OwnerGid: '1000', Permissions: '0770'}
@@ -120,7 +118,6 @@ Resources:
     Type: AWS::EFS::AccessPoint
     Properties:
       FileSystemId: !Ref OnlyOfficeFileSystem
-      PosixUser: {Uid: '1000', Gid: '1000'}
       RootDirectory:
         Path: /database
         CreationInfo: {OwnerUid: '1000', OwnerGid: '1000', Permissions: '0770'}
@@ -128,7 +125,6 @@ Resources:
     Type: AWS::EFS::AccessPoint
     Properties:
       FileSystemId: !Ref OnlyOfficeFileSystem
-      PosixUser: {Uid: '1000', Gid: '1000'}
       RootDirectory:
         Path: /logs
         CreationInfo: {OwnerUid: '1000', OwnerGid: '1000', Permissions: '0770'}
